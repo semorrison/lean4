@@ -20,44 +20,50 @@ that users don't need to import core Lean modules to make builtin handlers work,
 they *can* easily create custom handlers and use them in the same file. -/
 builtin_initialize builtinRpcProcedures : IO.Ref (Std.PHashMap Name RpcProcedure) ←
   IO.mkRef {}
-
 builtin_initialize userRpcProcedures : MapDeclarationExtension Name ←
   mkMapDeclarationExtension `userRpcProcedures
 
-open RequestM in
-private unsafe def handleRpcCallUnsafe (p : Lsp.RpcCallParams) : RequestM (RequestTask Json) := do
-  let doc ← readDoc
-  let text := doc.meta.text
-  let callPos := text.lspPosToUtf8Pos p.position
-  bindWaitFindSnap doc (fun s => s.endPos >= callPos)
-    (notFoundX := throwThe RequestError
-      { code := JsonRpc.ErrorCode.invalidParams
-        message := s!"Incorrect position '{p.toTextDocumentPositionParams}' in RPC call" })
-    fun snap => do
-      if let some proc := (← builtinRpcProcedures.get).find? p.method then
-        proc.wrapper p.sessionId p.params
-      else if let some procName := userRpcProcedures.find? snap.env p.method then
-        let options := snap.cmdState.scopes.head!.opts
-        let proc : Except _ _ := Lean.Environment.evalConstCheck RpcProcedure snap.env options ``RpcProcedure procName
-        match proc with
-        | Except.ok x => x.wrapper p.sessionId p.params
-        | Except.error e => throwThe RequestError {
-          code := JsonRpc.ErrorCode.internalError
-          message := s!"Failed to evaluate RPC constant '{procName}': {e}" }
-      else
-        throwThe RequestError {
-          code := JsonRpc.ErrorCode.methodNotFound
-          message := s!"No RPC method '{p.method}' bound" }
+private unsafe def evalRpcProcedureUnsafe (env : Environment) (opts : Options) (procName : Name) :
+    Except String RpcProcedure :=
+  env.evalConstCheck RpcProcedure opts ``RpcProcedure procName
 
-@[implementedBy handleRpcCallUnsafe]
-private opaque handleRpcCall (p : Lsp.RpcCallParams) : RequestM (RequestTask Json)
+@[implementedBy evalRpcProcedureUnsafe]
+opaque evalRpcProcedure (env : Environment) (opts : Options) (procName : Name) :
+    Except String RpcProcedure
+
+open RequestM in
+def handleRpcCall (p : Lsp.RpcCallParams) : RequestM (RequestTask Json) := do
+  -- The imports are finished at this point, because the handleRequest function
+  -- waits for the header.  (Therefore the built-in RPC procedures won't change
+  -- if we wait for further snapshots.)
+  if let some proc := (← builtinRpcProcedures.get).find? p.method then
+    proc.wrapper p.sessionId p.params
+  else
+    let doc ← readDoc
+    let text := doc.meta.text
+    let callPos := text.lspPosToUtf8Pos p.position
+    let throwNotFound := throwThe RequestError
+      { code := .methodNotFound
+        message := s!"No RPC method '{p.method}' found"}
+    bindWaitFindSnap doc (notFoundX := throwNotFound)
+      (fun s => s.endPos >= callPos ||
+        (userRpcProcedures.find? s.env p.method).isSome)
+      fun snap => do
+        if let some procName := userRpcProcedures.find? snap.env p.method then
+          let options := snap.cmdState.scopes.head!.opts
+          match evalRpcProcedure snap.env options procName with
+          | .ok x => x.wrapper p.sessionId p.params
+          | .error e => throwThe RequestError {
+            code := .internalError
+            message := s!"Failed to evaluate RPC constant '{procName}': {e}" }
+        else
+          throwNotFound
 
 builtin_initialize
   registerLspRequestHandler "$/lean/rpc/call" Lsp.RpcCallParams Json handleRpcCall
 
 def wrapRpcProcedure (method : Name) paramType respType
-    {paramLspType} [RpcEncoding paramType paramLspType] [FromJson paramLspType]
-    {respLspType} [RpcEncoding respType respLspType] [ToJson respLspType]
+    [RpcEncodable paramType] [RpcEncodable respType]
     (handler : paramType → RequestM (RequestTask respType)) : RpcProcedure :=
   ⟨fun seshId j => do
     let rc ← read
@@ -66,9 +72,7 @@ def wrapRpcProcedure (method : Name) paramType respType
       | throwThe RequestError { code := JsonRpc.ErrorCode.rpcNeedsReconnect
                                 message := s!"Outdated RPC session" }
     let t ← RequestM.asTask do
-      let paramsLsp ← liftExcept <| parseRequestParams paramLspType j
-      let act := rpcDecode (α := paramType) (β := paramLspType) (m := StateM FileWorker.RpcSession) paramsLsp
-      match act.run' (← seshRef.get) with
+      match rpcDecode j (← seshRef.get).objects with
       | Except.ok v => return v
       | Except.error e => throwThe RequestError {
           code := JsonRpc.ErrorCode.invalidParams
@@ -81,23 +85,12 @@ def wrapRpcProcedure (method : Name) paramType respType
 
     RequestM.mapTask t fun
       | Except.error e => throw e
-      | Except.ok ret => do
-        let act : StateM FileWorker.RpcSession (Except String respLspType) := do
-          let s ← get
-          match ← rpcEncode (α := respType) (β := respLspType) (m := StateM FileWorker.RpcSession) ret with
-            | .ok x => return .ok x
-            | .error e => set s; return .error e
-        match ← seshRef.modifyGet act.run with
-          | .ok x => return toJson x
-          | .error e =>
-            throwThe RequestError {
-              code := JsonRpc.ErrorCode.invalidParams
-              message := s!"Cannot encode result of RPC call '{method}'\n{e}"
-            }⟩
+      | Except.ok ret =>
+        seshRef.modifyGet fun st =>
+          rpcEncode ret st.objects |>.map id ({st with objects := ·})⟩
 
 def registerBuiltinRpcProcedure (method : Name) paramType respType
-    {paramLspType} [RpcEncoding paramType paramLspType] [FromJson paramLspType]
-    {respLspType} [RpcEncoding respType respLspType] [ToJson respLspType]
+    [RpcEncodable paramType] [RpcEncodable respType]
     (handler : paramType → RequestM (RequestTask respType)) : IO Unit := do
   let errMsg := s!"Failed to register builtin RPC call handler for '{method}'"
   unless (← IO.initializing) do
@@ -137,7 +130,7 @@ builtin_initialize registerBuiltinAttribute {
   descr := "Marks a function as a Lean server RPC method.
     Shorthand for `registerRpcProcedure`.
     The function must have type `α → RequestM (RequestTask β)` with
-    RpcEncodings for both α and β."
+    `[RpcEncodable α]` and `[RpcEncodable β]`."
   applicationTime := AttributeApplicationTime.afterCompilation
   add := fun decl _ _ =>
     registerRpcProcedure decl

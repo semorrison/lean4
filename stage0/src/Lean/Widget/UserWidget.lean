@@ -4,11 +4,8 @@ Released under Apache 2.0 license as described in the file LICENSE.
 
 Authors: E.W.Ayers
 -/
-import Lean.Widget.Basic
-import Lean.Data.Json
-import Lean.Environment
-import Lean.Server
 import Lean.Elab.Eval
+import Lean.Server.Rpc.RequestHandling
 
 open Lean
 
@@ -95,16 +92,20 @@ structure GetWidgetSourceParams where
   pos : Lean.Lsp.Position
   deriving ToJson, FromJson
 
-open Lean.Server Lean RequestM in
+open Server RequestM in
 @[serverRpcMethod]
-def getWidgetSource (args : GetWidgetSourceParams) : RequestM (RequestTask WidgetSource) :=
-  RequestM.withWaitFindSnapAtPos args.pos fun snap => do
-    let env := snap.cmdState.env
-    if let some id := widgetSourceRegistry.getState env |>.find? args.hash then
-      let d ← Lean.Server.RequestM.runCore snap <| getUserWidgetDefinition id
-      return {sourcetext := d.javascript}
-    else
-      throw <| RequestError.mk .invalidParams s!"No registered user-widget with hash {args.hash}"
+def getWidgetSource (args : GetWidgetSourceParams) : RequestM (RequestTask WidgetSource) := do
+  let doc ← readDoc
+  let pos := doc.meta.text.lspPosToUtf8Pos args.pos
+  let notFound := throwThe RequestError ⟨.invalidParams, s!"No registered user-widget with hash {args.hash}"⟩
+  withWaitFindSnap doc (notFoundX := notFound)
+    (fun s => s.endPos >= pos || (widgetSourceRegistry.getState s.env).contains args.hash)
+    fun snap => do
+      if let some id := widgetSourceRegistry.getState snap.env |>.find? args.hash then
+        runCoreM snap do
+          return {sourcetext := (← getUserWidgetDefinition id).javascript}
+      else
+        notFound
 
 open Lean Elab
 
@@ -144,7 +145,7 @@ def getWidgets (args : Lean.Lsp.Position) : RequestM (RequestTask (GetWidgetsRes
   let doc ← readDoc
   let filemap := doc.meta.text
   let pos := filemap.lspPosToUtf8Pos args
-  withWaitFindSnapAtPos args fun snap => do
+  withWaitFindSnap doc (·.endPos >= pos) (notFoundX := return ⟨∅⟩) fun snap => do
     let env := snap.env
     let ws := widgetInfosAt? filemap snap.infoTree pos
     let ws ← ws.toArray.mapM (fun (w : UserWidgetInfo) => do
@@ -167,11 +168,9 @@ def saveWidgetInfo [Monad m] [MonadEnv m] [MonadError m] [MonadInfoTree m] (widg
   }
   pushInfoLeaf info
 
-/-!  # Widget command
+/-!  # Widget command -/
 
-Use `#widget <widgetname> <props>` to display a widget.
--/
-
+/-- Use `#widget <widgetname> <props>` to display a widget. Useful for debugging widgets. -/
 syntax (name := widgetCmd) "#widget " ident term : command
 
 open Lean Lean.Meta Lean.Elab Lean.Elab.Term in
@@ -183,10 +182,9 @@ private opaque evalJson (stx : Syntax) : TermElabM Json
 
 open Elab Command in
 
-/-- Use this to place a widget. Useful for debugging widgets. -/
 @[commandElab widgetCmd] def elabWidgetCmd : CommandElab := fun
   | stx@`(#widget $id:ident $props) => do
-    let props : Json ← runTermElabM none (fun _ => evalJson props)
+    let props : Json ← runTermElabM fun _ => evalJson props
     saveWidgetInfo id.getId props stx
   | _ => throwUnsupportedSyntax
 

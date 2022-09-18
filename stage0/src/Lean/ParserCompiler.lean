@@ -3,10 +3,8 @@ Copyright (c) 2020 Sebastian Ullrich. All rights reserved.
 Released under Apache 2.0 license as described in the file LICENSE.
 Authors: Sebastian Ullrich
 -/
-import Lean.Util.ReplaceExpr
-import Lean.Meta.Basic
 import Lean.Meta.ReduceEval
-import Lean.Meta.WHNF
+import Lean.KeyedDeclsAttribute
 import Lean.ParserCompiler.Attribute
 import Lean.Parser.Extension
 
@@ -24,7 +22,7 @@ structure Context (α : Type) where
 
 def Context.tyName {α} (ctx : Context α) : Name := ctx.categoryAttr.defn.valueTypeName
 
--- replace all references of `Parser` with `tyName`
+/-- Replace all references of `Parser` with `tyName` -/
 def replaceParserTy {α} (ctx : Context α) (e : Expr) : Expr :=
   e.replace fun e =>
     -- strip `optParam`

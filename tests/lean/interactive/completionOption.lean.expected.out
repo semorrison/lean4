@@ -202,6 +202,30 @@
    {"replace":
     {"start": {"line": 10, "character": 11},
      "end": {"line": 10, "character": 18}},
+    "newText": "trace.Compiler.pullFunDecls",
+    "insert":
+    {"start": {"line": 10, "character": 11},
+     "end": {"line": 10, "character": 18}}},
+   "label": "trace.Compiler.pullFunDecls",
+   "kind": 10,
+   "detail":
+   "(false), enable/disable tracing for the given module and submodules"},
+  {"textEdit":
+   {"replace":
+    {"start": {"line": 10, "character": 11},
+     "end": {"line": 10, "character": 18}},
+    "newText": "trace.Compiler.pullInstances",
+    "insert":
+    {"start": {"line": 10, "character": 11},
+     "end": {"line": 10, "character": 18}}},
+   "label": "trace.Compiler.pullInstances",
+   "kind": 10,
+   "detail":
+   "(false), enable/disable tracing for the given module and submodules"},
+  {"textEdit":
+   {"replace":
+    {"start": {"line": 10, "character": 11},
+     "end": {"line": 10, "character": 18}},
     "newText": "trace.Elab.postpone",
     "insert":
     {"start": {"line": 10, "character": 11},
@@ -270,6 +294,18 @@
    "kind": 10,
    "detail":
    "(false), (trace) enable/disable tracing for the given module and submodules"},
+  {"textEdit":
+   {"replace":
+    {"start": {"line": 10, "character": 11},
+     "end": {"line": 10, "character": 18}},
+    "newText": "trace.Compiler.findJoinPoints",
+    "insert":
+    {"start": {"line": 10, "character": 11},
+     "end": {"line": 10, "character": 18}}},
+   "label": "trace.Compiler.findJoinPoints",
+   "kind": 10,
+   "detail":
+   "(false), enable/disable tracing for the given module and submodules"},
   {"textEdit":
    {"replace":
     {"start": {"line": 10, "character": 11},

@@ -158,8 +158,6 @@ protected def reprPrec (n : Name) (prec : Nat) : Std.Format :=
 instance : Repr Name where
   reprPrec := Name.reprPrec
 
-deriving instance Repr for Syntax
-
 def capitalize : Name → Name
   | .str p s => .str p s.capitalize
   | n        => n
@@ -257,9 +255,14 @@ instance monadNameGeneratorLift (m n : Type → Type) [MonadLift m n] [MonadName
 
 namespace Syntax
 
+deriving instance Repr for Syntax.Preresolved
+deriving instance Repr for Syntax
+deriving instance Repr for TSyntax
+
 abbrev Term := TSyntax `term
 abbrev Command := TSyntax `command
 protected abbrev Level := TSyntax `level
+protected abbrev Tactic := TSyntax `tactic
 abbrev Prec := TSyntax `prec
 abbrev Prio := TSyntax `prio
 abbrev Ident := TSyntax identKind
@@ -325,6 +328,9 @@ end TSyntax
 
 namespace Syntax
 
+deriving instance BEq for Syntax.Preresolved
+
+/-- Compare syntax structures modulo source info. -/
 partial def structEq : Syntax → Syntax → Bool
   | Syntax.missing, Syntax.missing => true
   | Syntax.node _ k args, Syntax.node _ k' args' => k == k' && args.isEqv args' structEq
@@ -479,17 +485,18 @@ structure Module where
      syntatic categories are expanded by `expandMacros`.
 -/
 partial def expandMacros (stx : Syntax) (p : SyntaxNodeKind → Bool := fun k => k != `Lean.Parser.Term.byTactic) : MacroM Syntax :=
-  match stx with
-  | .node info k args => do
-    if p k then
-      match (← expandMacro? stx) with
-      | some stxNew => expandMacros stxNew
-      | none        => do
-        let args ← Macro.withIncRecDepth stx <| args.mapM expandMacros
-        return .node info k args
-    else
-      return stx
-  | stx => return stx
+  withRef stx do
+    match stx with
+    | .node info k args => do
+      if p k then
+        match (← expandMacro? stx) with
+        | some stxNew => expandMacros stxNew
+        | none        => do
+          let args ← Macro.withIncRecDepth stx <| args.mapM expandMacros
+          return .node info k args
+      else
+        return stx
+    | stx => return stx
 
 /-! # Helper functions for processing Syntax programmatically -/
 
@@ -509,7 +516,7 @@ def mkIdentFromRef [Monad m] [MonadRef m] (val : Name) : m Ident := do
 def mkCIdentFrom (src : Syntax) (c : Name) : Ident :=
   -- Remark: We use the reserved macro scope to make sure there are no accidental collision with our frontend
   let id   := addMacroScope `_internal c reservedMacroScope
-  ⟨Syntax.ident (SourceInfo.fromRef src) (toString id).toSubstring id [(c, [])]⟩
+  ⟨Syntax.ident (SourceInfo.fromRef src) (toString id).toSubstring id [.decl c []]⟩
 
 def mkCIdentFromRef [Monad m] [MonadRef m] (c : Name) : m Syntax := do
   return mkCIdentFrom (← getRef) c
@@ -670,6 +677,10 @@ def isNatLit? (s : Syntax) : Option Nat :=
 def isFieldIdx? (s : Syntax) : Option Nat :=
   isNatLitAux fieldIdxKind s
 
+/-- Decodes a 'scientific number' string which is consumed by the `OfScientific` class.
+  Takes as input a string such as `123`, `123.456e7` and returns a triple `(n, sign, e)` with value given by
+  `n * 10^-e` if `sign` else `n * 10^e`.
+-/
 partial def decodeScientificLitVal? (s : String) : Option (Nat × Bool × Nat) :=
   let len := s.length
   if len == 0 then none
@@ -695,9 +706,12 @@ where
         none
 
   decodeExp (i : String.Pos) (val : Nat) (e : Nat) : Option (Nat × Bool × Nat) :=
+    if s.atEnd i then none else
     let c := s.get i
     if c == '-' then
        decodeAfterExp (s.next i) val e true 0
+    else if c == '+' then
+       decodeAfterExp (s.next i) val e false 0
     else
        decodeAfterExp i val e false 0
 
@@ -888,22 +902,22 @@ end Syntax
 namespace TSyntax
 
 def getNat (s : NumLit) : Nat :=
-  s.raw.isNatLit?.get!
+  s.raw.isNatLit?.getD 0
 
 def getId (s : Ident) : Name :=
   s.raw.getId
 
 def getScientific (s : ScientificLit) : Nat × Bool × Nat :=
-  s.raw.isScientificLit?.get!
+  s.raw.isScientificLit?.getD (0, false, 0)
 
 def getString (s : StrLit) : String :=
-  s.raw.isStrLit?.get!
+  s.raw.isStrLit?.getD ""
 
 def getChar (s : CharLit) : Char :=
-  s.raw.isCharLit?.get!
+  s.raw.isCharLit?.getD default
 
 def getName (s : NameLit) : Name :=
-  s.raw.isNameLit?.get!
+  s.raw.isNameLit?.getD .anonymous
 
 namespace Compat
 
@@ -1174,12 +1188,12 @@ inductive TransparencyMode where
   deriving Inhabited, BEq, Repr
 
 inductive EtaStructMode where
-  | /-- Enable eta for structure and classes. -/
-    all
-  | /-- Enable eta only for structures that are not classes. -/
-    notClasses
-  | /-- Disable eta for structures and classes. -/
-    none
+  /-- Enable eta for structure and classes. -/
+  | all
+  /-- Enable eta only for structures that are not classes. -/
+  | notClasses
+  /-- Disable eta for structures and classes. -/
+  | none
   deriving Inhabited, BEq, Repr
 
 namespace DSimp
@@ -1252,20 +1266,23 @@ end Meta
 
 namespace Parser.Tactic
 
+/-- `erw [rules]` is a shorthand for `rw (config := { transparency := .default }) [rules]`.
+This does rewriting up to unfolding of regular definitions (by comparison to regular `rw`
+which only unfolds `@[reducible]` definitions). -/
 macro "erw " s:rwRuleSeq loc:(location)? : tactic =>
-  `(rw (config := { transparency := Lean.Meta.TransparencyMode.default }) $s $(loc)?)
+  `(rw (config := { transparency := .default }) $s $(loc)?)
 
 syntax simpAllKind := atomic("(" &"all") " := " &"true" ")"
 syntax dsimpKind   := atomic("(" &"dsimp") " := " &"true" ")"
 
-macro "declare_simp_like_tactic" opt:((simpAllKind <|> dsimpKind)?) tacName:ident tacToken:str updateCfg:term : command => do
+macro (name := declareSimpLikeTactic) doc?:(docComment)? "declare_simp_like_tactic" opt:((simpAllKind <|> dsimpKind)?) tacName:ident tacToken:str updateCfg:term : command => do
   let (kind, tkn, stx) ←
     if opt.raw.isNone then
-      pure (← `(``simp), ← `("simp "), ← `(syntax (name := $tacName) $tacToken:str (config)? (discharger)? (&"only ")? ("[" (simpStar <|> simpErase <|> simpLemma),* "]")? (location)? : tactic))
+      pure (← `(``simp), ← `("simp "), ← `($[$doc?:docComment]? syntax (name := $tacName) $tacToken:str (config)? (discharger)? (&"only ")? ("[" (simpStar <|> simpErase <|> simpLemma),* "]")? (location)? : tactic))
     else if opt.raw[0].getKind == ``simpAllKind then
-      pure (← `(``simpAll), ← `("simp_all "), ← `(syntax (name := $tacName) $tacToken:str (config)? (discharger)? (&"only ")? ("[" (simpErase <|> simpLemma),* "]")? : tactic))
+      pure (← `(``simpAll), ← `("simp_all "), ← `($[$doc?:docComment]? syntax (name := $tacName) $tacToken:str (config)? (discharger)? (&"only ")? ("[" (simpErase <|> simpLemma),* "]")? : tactic))
     else
-      pure (← `(``dsimp), ← `("dsimp "), ← `(syntax (name := $tacName) $tacToken:str (config)? (discharger)? (&"only ")? ("[" (simpErase <|> simpLemma),* "]")? (location)? : tactic))
+      pure (← `(``dsimp), ← `("dsimp "), ← `($[$doc?:docComment]? syntax (name := $tacName) $tacToken:str (config)? (discharger)? (&"only ")? ("[" (simpErase <|> simpLemma),* "]")? (location)? : tactic))
   `($stx:command
     @[macro $tacName] def expandSimp : Macro := fun s => do
       let c ← match s[1][0] with
@@ -1276,14 +1293,34 @@ macro "declare_simp_like_tactic" opt:((simpAllKind <|> dsimpKind)?) tacName:iden
       let r := s.setArg 1 (mkNullNode #[c])
       return r)
 
+/-- `simp!` is shorthand for `simp` with `autoUnfold := true`.
+This will rewrite with all equation lemmas, which can be used to
+partially evaluate many definitions. -/
 declare_simp_like_tactic simpAutoUnfold "simp! " fun (c : Lean.Meta.Simp.Config) => { c with autoUnfold := true }
+
+/-- `simp_arith` is shorthand for `simp` with `arith := true`.
+This enables the use of normalization by linear arithmetic. -/
 declare_simp_like_tactic simpArith "simp_arith " fun (c : Lean.Meta.Simp.Config) => { c with arith := true }
+
+/-- `simp_arith!` is shorthand for `simp_arith` with `autoUnfold := true`.
+This will rewrite with all equation lemmas, which can be used to
+partially evaluate many definitions. -/
 declare_simp_like_tactic simpArithAutoUnfold "simp_arith! " fun (c : Lean.Meta.Simp.Config) => { c with arith := true, autoUnfold := true }
 
+/-- `simp_all!` is shorthand for `simp_all` with `autoUnfold := true`.
+This will rewrite with all equation lemmas, which can be used to
+partially evaluate many definitions. -/
 declare_simp_like_tactic (all := true) simpAllAutoUnfold "simp_all! " fun (c : Lean.Meta.Simp.ConfigCtx) => { c with autoUnfold := true }
+
+/-- `simp_all_arith` combines the effects of `simp_all` and `simp_arith`. -/
 declare_simp_like_tactic (all := true) simpAllArith "simp_all_arith " fun (c : Lean.Meta.Simp.ConfigCtx) => { c with arith := true }
+
+/-- `simp_all_arith!` combines the effects of `simp_all`, `simp_arith` and `simp!`. -/
 declare_simp_like_tactic (all := true) simpAllArithAutoUnfold "simp_all_arith! " fun (c : Lean.Meta.Simp.ConfigCtx) => { c with arith := true, autoUnfold := true }
 
+/-- `dsimp!` is shorthand for `dsimp` with `autoUnfold := true`.
+This will rewrite with all equation lemmas, which can be used to
+partially evaluate many definitions. -/
 declare_simp_like_tactic (dsimp := true) dsimpAutoUnfold "dsimp! " fun (c : Lean.Meta.DSimp.Config) => { c with autoUnfold := true }
 
 end Parser.Tactic

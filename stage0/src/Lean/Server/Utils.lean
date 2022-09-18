@@ -4,11 +4,11 @@ Released under Apache 2.0 license as described in the file LICENSE.
 
 Authors: Wojciech Nawrocki, Marc Huisinga
 -/
-import Lean.Data.Position
-import Lean.Data.Lsp
+import Lean.Data.Lsp.Communication
+import Lean.Data.Lsp.Diagnostics
+import Lean.Data.Lsp.Extra
+import Lean.Data.Lsp.TextSync
 import Lean.Server.InfoUtils
-import Init.System.FilePath
-import Lean.Parser.Basic
 
 namespace IO
 
@@ -62,30 +62,6 @@ def withPrefix (a : Stream) (pre : String) : Stream :=
 end FS.Stream
 end IO
 
-namespace Lean.Lsp.DocumentUri
-
-/-- Transform the given path to a file:// URI. -/
-def ofPath (fname : System.FilePath) : DocumentUri :=
-  let fname := fname.normalize.toString
-  let fname := if System.Platform.isWindows then
-    fname.map fun c => if c == '\\' then '/' else c
-  else
-    fname
-  -- TODO(WN): URL-encode special characters
-  -- Three slashes denote localhost.
-  "file:///" ++ fname.dropWhile (· == '/')
-
-/-- Return local path from file:// URI, if any. -/
-def toPath? (uri : DocumentUri) : Option System.FilePath := Id.run do
-  if !uri.startsWith "file:///" then
-    return none
-  let mut p := uri.drop "file://".length
-  if System.Platform.isWindows then
-    p := p.map fun c => if c == '/' then '\\' else c
-  some ⟨p⟩
-
-end Lean.Lsp.DocumentUri
-
 namespace Lean.Server
 
 structure DocumentMeta where
@@ -96,7 +72,7 @@ structure DocumentMeta where
 
 def DocumentMeta.mkInputContext (doc : DocumentMeta) : Parser.InputContext where
   input    := doc.text.source
-  fileName := doc.uri.toPath?.getD doc.uri |>.toString
+  fileName := (System.Uri.fileUriToPath? doc.uri).getD doc.uri |>.toString
   fileMap  := doc.text
 
 def replaceLspRange (text : FileMap) (r : Lsp.Range) (newText : String) : FileMap :=

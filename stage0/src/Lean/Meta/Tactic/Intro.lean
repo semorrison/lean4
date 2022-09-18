@@ -58,7 +58,6 @@ namespace Lean.Meta
             loop (i+1) lctx fvars fvars.size s newType
           else
             let newType ← whnf newType
-            trace[Meta.debug] "newType whnf: {newType}"
             if newType.isForall then
               loop (i+1) lctx fvars fvars.size s newType
             else
@@ -71,6 +70,20 @@ register_builtin_option tactic.hygienic : Bool := {
   group    := "tactic"
   descr    := "make sure tactics are hygienic"
 }
+
+private def mkFreshBinderNameForTacticCore (lctx : LocalContext) (binderName : Name) (hygienic := true) : MetaM Name := do
+  if hygienic then
+    mkFreshUserName binderName
+  else
+    return lctx.getUnusedName binderName
+
+/--
+Similar to `mkFreshUserName`, but takes into account `tactic.hygienic` option value.
+If `tactic.hygienic = true`, then the current macro scopes are applied to `binderName`.
+If not, then an unused (accessible) name (based on `binderName`) in the local context is used.
+-/
+def mkFreshBinderNameForTactic (binderName : Name) : MetaM Name := do
+  mkFreshBinderNameForTacticCore (← getLCtx) binderName (tactic.hygienic.get (← getOptions))
 
 private def mkAuxNameImp (preserveBinderNames : Bool) (hygienic : Bool) (useNamesForExplicitOnly : Bool)
     (lctx : LocalContext) (binderName : Name) (isExplicit : Bool) : List Name → MetaM (Name × List Name)
@@ -86,11 +99,9 @@ where
   mkAuxNameWithoutGivenName (rest : List Name) : MetaM (Name × List Name) := do
     if preserveBinderNames then
       return (binderName, rest)
-    else if hygienic then
-      let binderName ← mkFreshUserName binderName
-      return (binderName, rest)
     else
-      return (lctx.getUnusedName binderName, rest)
+      let binderName ← mkFreshBinderNameForTacticCore lctx binderName hygienic
+      return (binderName, rest)
 
 def introNCore (mvarId : MVarId) (n : Nat) (givenNames : List Name) (useNamesForExplicitOnly : Bool) (preserveBinderNames : Bool)
     : MetaM (Array FVarId × MVarId) := do
@@ -136,9 +147,10 @@ def intro1Core (mvarId : MVarId) (preserveBinderNames : Bool) : MetaM (FVarId ×
   let (fvarIds, mvarId) ← introNCore mvarId 1 [] (useNamesForExplicitOnly := false) preserveBinderNames
   return (fvarIds[0]!, mvarId)
 
-/--
-Introduce one binder.
--/
+/-- Introduce one object from the goal `mvarid`, without preserving the name used in the binder.
+Returns a pair made of the newly introduced variable (which will have an inaccessible name)
+and the new goal. This will fail if there is nothing to introduce, ie when the goal
+does not start with a forall, lambda or let. -/
 abbrev _root_.Lean.MVarId.intro1 (mvarId : MVarId) : MetaM (FVarId × MVarId) :=
   intro1Core mvarId false
 
@@ -146,9 +158,10 @@ abbrev _root_.Lean.MVarId.intro1 (mvarId : MVarId) : MetaM (FVarId × MVarId) :=
 abbrev intro1 (mvarId : MVarId) : MetaM (FVarId × MVarId) :=
   mvarId.intro1
 
-/--
-Introduce one binder. The new hypothesis is named using the binder name.
--/
+/-- Introduce one object from the goal `mvarid`, preserving the name used in the binder.
+Returns a pair made of the newly introduced variable and the new goal.
+This will fail if there is nothing to introduce, ie when the goal
+does not start with a forall, lambda or let. -/
 abbrev _root_.Lean.MVarId.intro1P (mvarId : MVarId) : MetaM (FVarId × MVarId) :=
   intro1Core mvarId true
 

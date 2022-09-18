@@ -5,10 +5,9 @@ Authors: Leonardo de Moura
 -/
 import Lean.Meta.Tactic.Rewrite
 import Lean.Meta.Tactic.Replace
-import Lean.Elab.Tactic.Basic
-import Lean.Elab.Tactic.ElabTerm
 import Lean.Elab.Tactic.Location
 import Lean.Elab.Tactic.Config
+
 namespace Lean.Elab.Tactic
 open Meta
 
@@ -50,6 +49,7 @@ def withRWRulesSeq (token : Syntax) (rwRulesSeqStx : Syntax) (x : (symm : Bool) 
             | [] => throwError "failed to rewrite using equation theorems for '{declName}'"
             | eqThm::eqThms => (x symm (mkIdentFrom id eqThm)) <|> go eqThms
           go eqThms.toList
+          discard <| Term.addTermInfo id (← mkConstWithFreshMVarLevels declName) (lctx? := ← getLCtx)
         match term with
         | `($id:ident)  => processId id
         | `(@$id:ident) => processId id

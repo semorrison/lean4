@@ -59,13 +59,22 @@
   - [Thunk](./thunk.md)
   - [Task and Thread](./task.md)
 - [Functions](./functions.md)
+- [Monads](./monads/intro.md)
+  - [Functor](./monads/functors.lean.md)
+  - [Applicative](./monads/applicatives.lean.md)
+  - [Monad](./monads/monads.lean.md)
+  - [Reader](./monads/readers.lean.md)
+  - [State](./monads/states.lean.md)
+  - [Except](./monads/except.lean.md)
+  - [Transformers](./monads/transformers.lean.md)
+  - [Laws](./monads/laws.lean.md)
 
 # Other
 
 - [Frequently Asked Questions](./faq.md)
 - [Significant Changes from Lean 3](./lean3changes.md)
 - [Syntax Highlighting Lean in LaTeX](./syntax_highlight_in_latex.md)
-- [User Widgets](./widgets.md)
+- [User Widgets](examples/widgets.lean.md)
 
 # Development
 

@@ -1,6 +1,6 @@
 // Lean compiler output
 // Module: Lean.SubExpr
-// Imports: Init Lean.Meta.Basic Lean.Data.Json Std.Data.RBMap
+// Imports: Init Lean.Meta.Basic Lean.Data.Json Lean.Data.RBMap
 #include <lean/lean.h>
 #if defined(__clang__)
 #pragma clang diagnostic ignored "-Wunused-parameter"
@@ -87,6 +87,7 @@ static lean_object* l___private_Lean_SubExpr_0__Lean_SubExpr_Pos_ofStringCoord__
 lean_object* l_Nat_repr(lean_object*);
 LEAN_EXPORT uint8_t l_Lean_SubExpr_Pos_all(lean_object*, lean_object*);
 LEAN_EXPORT lean_object* l_Lean_SubExpr_Pos_foldlM___rarg___lambda__1___boxed(lean_object*, lean_object*, lean_object*);
+lean_object* l_panic___at_String_toNat_x21___spec__1(lean_object*);
 LEAN_EXPORT lean_object* l_Lean_SubExpr_Pos_instDecidableEqPos___boxed(lean_object*, lean_object*);
 lean_object* l_List_toString___at_Lean_MetavarContext_MkBinding_instToStringException___spec__2(lean_object*);
 lean_object* l_Function_comp___rarg(lean_object*, lean_object*, lean_object*);
@@ -135,7 +136,6 @@ lean_object* lean_nat_mul(lean_object*, lean_object*);
 LEAN_EXPORT lean_object* l_Array_mapMUnsafe_map___at_Lean_SubExpr_Pos_fromString_x3f___spec__1___boxed(lean_object*, lean_object*, lean_object*);
 LEAN_EXPORT lean_object* l_Lean_SubExpr_Pos_pushAppArg___boxed(lean_object*);
 LEAN_EXPORT lean_object* l_Lean_SubExpr_Pos_foldl___rarg___boxed(lean_object*, lean_object*, lean_object*);
-lean_object* l_panic___at_Lean_TSyntax_getNat___spec__1(lean_object*);
 lean_object* l_List_toArrayAux___rarg(lean_object*, lean_object*);
 static lean_object* l___private_Lean_SubExpr_0__Lean_SubExpr_Pos_ofStringCoord___closed__7;
 LEAN_EXPORT lean_object* l_Lean_SubExpr_Pos_foldrM___rarg(lean_object*, lean_object*, lean_object*, lean_object*);
@@ -294,7 +294,7 @@ else
 {
 lean_object* x_5; lean_object* x_6; 
 x_5 = l_Lean_SubExpr_Pos_head___closed__4;
-x_6 = l_panic___at_Lean_TSyntax_getNat___spec__1(x_5);
+x_6 = l_panic___at_String_toNat_x21___spec__1(x_5);
 return x_6;
 }
 }
@@ -1783,7 +1783,7 @@ return x_5;
 lean_object* initialize_Init(uint8_t builtin, lean_object*);
 lean_object* initialize_Lean_Meta_Basic(uint8_t builtin, lean_object*);
 lean_object* initialize_Lean_Data_Json(uint8_t builtin, lean_object*);
-lean_object* initialize_Std_Data_RBMap(uint8_t builtin, lean_object*);
+lean_object* initialize_Lean_Data_RBMap(uint8_t builtin, lean_object*);
 static bool _G_initialized = false;
 LEAN_EXPORT lean_object* initialize_Lean_SubExpr(uint8_t builtin, lean_object* w) {
 lean_object * res;
@@ -1798,7 +1798,7 @@ lean_dec_ref(res);
 res = initialize_Lean_Data_Json(builtin, lean_io_mk_world());
 if (lean_io_result_is_error(res)) return res;
 lean_dec_ref(res);
-res = initialize_Std_Data_RBMap(builtin, lean_io_mk_world());
+res = initialize_Lean_Data_RBMap(builtin, lean_io_mk_world());
 if (lean_io_result_is_error(res)) return res;
 lean_dec_ref(res);
 l_Lean_SubExpr_Pos_maxChildren = _init_l_Lean_SubExpr_Pos_maxChildren();

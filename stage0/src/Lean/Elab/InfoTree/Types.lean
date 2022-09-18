@@ -41,6 +41,8 @@ structure CommandInfo extends ElabInfo where
 inductive CompletionInfo where
   | dot (termInfo : TermInfo) (field? : Option Syntax) (expectedType? : Option Expr)
   | id (stx : Syntax) (id : Name) (danglingDot : Bool) (lctx : LocalContext) (expectedType? : Option Expr)
+  | dotId (stx : Syntax) (id : Name) (lctx : LocalContext) (expectedType? : Option Expr)
+  | fieldId (stx : Syntax) (id : Name) (lctx : LocalContext) (structName : Name)
   | namespaceId (stx : Syntax)
   | option (stx : Syntax)
   | endSection (stx : Syntax) (scopeNames : List String)
@@ -92,6 +94,26 @@ structure UserWidgetInfo where
   props : Json
   deriving Inhabited
 
+/--
+Specifies that the given free variables should be considered semantically identical in the current local context.
+Used for e.g. connecting variables before and after `match` generalization.
+-/
+structure FVarAliasInfo where
+  id     : FVarId
+  baseId : FVarId
+
+/--
+Contains the syntax of an identifier which is part of a field redeclaration, like:
+```
+structure Foo := x : Nat
+structure Bar extends Foo :=
+  x := 0
+--^ here
+```
+-/
+structure FieldRedeclInfo where
+  stx : Syntax
+
 /-- Header information for a node in `InfoTree`. -/
 inductive Info where
   | ofTacticInfo (i : TacticInfo)
@@ -102,6 +124,8 @@ inductive Info where
   | ofCompletionInfo (i : CompletionInfo)
   | ofUserWidgetInfo (i : UserWidgetInfo)
   | ofCustomInfo (i : CustomInfo)
+  | ofFVarAliasInfo (i : FVarAliasInfo)
+  | ofFieldRedeclInfo (i : FieldRedeclInfo)
   deriving Inhabited
 
 /-- The InfoTree is a structure that is generated during elaboration and used
@@ -126,12 +150,12 @@ inductive Info where
     `hole`s which are filled in later in the same way that unassigned metavariables are.
 -/
 inductive InfoTree where
-  | /-- The context object is created by `liftTermElabM` at `Command.lean` -/
-    context (i : ContextInfo) (t : InfoTree)
-  | /-- The children contain information for nested term elaboration and tactic evaluation -/
-    node (i : Info) (children : Std.PersistentArray InfoTree)
-  | /-- The elaborator creates holes (aka metavariables) for tactics and postponed terms -/
-    hole (mvarId : MVarId)
+  /-- The context object is created by `liftTermElabM` at `Command.lean` -/
+  | context (i : ContextInfo) (t : InfoTree)
+  /-- The children contain information for nested term elaboration and tactic evaluation -/
+  | node (i : Info) (children : Std.PersistentArray InfoTree)
+  /-- The elaborator creates holes (aka metavariables) for tactics and postponed terms -/
+  | hole (mvarId : MVarId)
   deriving Inhabited
 
 /-- This structure is the state that is being used to build an InfoTree object.

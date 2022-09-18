@@ -20,6 +20,7 @@ LEAN_EXPORT lean_object* l_Lean_Server_locationLinksFromDecl___lambda__2(lean_ob
 LEAN_EXPORT lean_object* l___private_Lean_Server_GoTo_0__Lean_Server_toJsonGoToKind____x40_Lean_Server_GoTo___hyg_24____boxed(lean_object*);
 static lean_object* l_Lean_findModuleOf_x3f___at_Lean_Server_locationLinksFromDecl___spec__1___closed__1;
 static lean_object* l___private_Lean_Server_GoTo_0__Lean_Server_toJsonGoToKind____x40_Lean_Server_GoTo___hyg_24____closed__2;
+lean_object* l_System_Uri_pathToUri(lean_object*);
 lean_object* lean_io_error_to_string(lean_object*);
 static lean_object* l___private_Lean_Server_GoTo_0__Lean_Server_toJsonGoToKind____x40_Lean_Server_GoTo___hyg_24____closed__1;
 LEAN_EXPORT lean_object* l_Lean_findDeclarationRanges_x3f___at_Lean_Server_locationLinksFromDecl___spec__2(lean_object*, lean_object*, lean_object*, lean_object*, lean_object*, lean_object*);
@@ -103,7 +104,6 @@ lean_object* l_Lean_SearchPath_findModuleWithExt(lean_object*, lean_object*, lea
 static lean_object* l___private_Lean_Server_GoTo_0__Lean_Server_toJsonGoToKind____x40_Lean_Server_GoTo___hyg_24____closed__5;
 LEAN_EXPORT lean_object* l_Lean_Server_GoToKind_noConfusion___rarg___lambda__1___boxed(lean_object*);
 extern lean_object* l_Lean_builtinDeclRanges;
-lean_object* l_Lean_Lsp_DocumentUri_ofPath(lean_object*);
 uint8_t lean_nat_dec_lt(lean_object*, lean_object*);
 LEAN_EXPORT lean_object* l_Lean_Server_GoToKind_toCtorIdx(uint8_t x_1) {
 _start:
@@ -669,7 +669,7 @@ if (x_17 == 0)
 {
 lean_object* x_18; lean_object* x_19; 
 x_18 = lean_ctor_get(x_16, 0);
-x_19 = l_Lean_Lsp_DocumentUri_ofPath(x_18);
+x_19 = l_System_Uri_pathToUri(x_18);
 lean_ctor_set(x_6, 0, x_19);
 lean_ctor_set(x_16, 0, x_6);
 return x_16;
@@ -682,7 +682,7 @@ x_21 = lean_ctor_get(x_16, 1);
 lean_inc(x_21);
 lean_inc(x_20);
 lean_dec(x_16);
-x_22 = l_Lean_Lsp_DocumentUri_ofPath(x_20);
+x_22 = l_System_Uri_pathToUri(x_20);
 lean_ctor_set(x_6, 0, x_22);
 x_23 = lean_alloc_ctor(0, 2, 0);
 lean_ctor_set(x_23, 0, x_6);
@@ -736,7 +736,7 @@ if (lean_is_exclusive(x_29)) {
  lean_dec_ref(x_29);
  x_32 = lean_box(0);
 }
-x_33 = l_Lean_Lsp_DocumentUri_ofPath(x_30);
+x_33 = l_System_Uri_pathToUri(x_30);
 x_34 = lean_alloc_ctor(1, 1, 0);
 lean_ctor_set(x_34, 0, x_33);
 if (lean_is_scalar(x_32)) {
@@ -829,7 +829,7 @@ _start:
 lean_object* x_1; lean_object* x_2; lean_object* x_3; lean_object* x_4; lean_object* x_5; lean_object* x_6; 
 x_1 = l_Lean_findModuleOf_x3f___at_Lean_Server_locationLinksFromDecl___spec__1___closed__1;
 x_2 = l_Lean_findModuleOf_x3f___at_Lean_Server_locationLinksFromDecl___spec__1___closed__2;
-x_3 = lean_unsigned_to_nat(70u);
+x_3 = lean_unsigned_to_nat(77u);
 x_4 = lean_unsigned_to_nat(36u);
 x_5 = l_Lean_findModuleOf_x3f___at_Lean_Server_locationLinksFromDecl___spec__1___closed__3;
 x_6 = l___private_Init_Util_0__mkPanicMessageWithDecl(x_1, x_2, x_3, x_4, x_5);

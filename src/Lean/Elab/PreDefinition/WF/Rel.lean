@@ -4,8 +4,8 @@ Released under Apache 2.0 license as described in the file LICENSE.
 Authors: Leonardo de Moura
 -/
 import Lean.Meta.Tactic.Apply
+import Lean.Meta.Tactic.Cases
 import Lean.Meta.Tactic.Rename
-import Lean.Meta.Tactic.Intro
 import Lean.Elab.SyntheticMVars
 import Lean.Elab.PreDefinition.Basic
 import Lean.Elab.PreDefinition.WF.TerminationHint
@@ -23,7 +23,7 @@ private def getRefFromElems (elems : Array TerminationByElement) : Syntax := Id.
 private partial def unpackMutual (preDefs : Array PreDefinition) (mvarId : MVarId) (fvarId : FVarId) : TermElabM (Array (FVarId × MVarId)) := do
   let rec go (i : Nat) (mvarId : MVarId) (fvarId : FVarId) (result : Array (FVarId × MVarId)) : TermElabM (Array (FVarId × MVarId)) := do
     if i < preDefs.size - 1 then
-      let #[s₁, s₂] ← cases mvarId fvarId | unreachable!
+      let #[s₁, s₂] ←  mvarId.cases fvarId | unreachable!
       go (i + 1) s₂.mvarId s₂.fields[0]!.fvarId! (result.push (s₁.fields[0]!.fvarId!, s₁.mvarId))
     else
       return result.push (fvarId, mvarId)
@@ -47,7 +47,7 @@ private partial def unpackUnary (preDef : PreDefinition) (prefixSize : Nat) (mva
   let rec go (i : Nat) (mvarId : MVarId) (fvarId : FVarId) : TermElabM MVarId := do
     trace[Elab.definition.wf] "i: {i}, varNames: {varNames}, goal: {mvarId}"
     if i < numPackedArgs - 1 then
-      let #[s] ← cases mvarId fvarId #[{ varNames := [varNames[prefixSize + i]!] }] | unreachable!
+      let #[s] ← mvarId.cases fvarId #[{ varNames := [varNames[prefixSize + i]!] }] | unreachable!
       go (i+1) s.mvarId s.fields[1]!.fvarId!
     else
       mvarId.rename fvarId varNames.back

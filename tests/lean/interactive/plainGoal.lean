@@ -21,6 +21,8 @@ example : 0 + n = n := by
 example : α → α := by
   intro a; apply a
        --^ $/lean/plainGoal
+        --^ $/lean/plainGoal
+         --^ $/lean/plainGoal
 
 example (h1 : n = m) (h2 : m = 0) : 0 = n := by
   rw [h1, h2]
@@ -36,11 +38,11 @@ example : 0 + n = n := by
 -- TODO: goal state after dedent
 
 example : 0 + n = n := by
-  induction n with
+  induction n
  --^ $/lean/plainGoal
 
 example : 0 + n = n := by
-  cases n with
+  cases n
  --^ $/lean/plainGoal
 
 example : ∀ a b : Nat, a = b := by

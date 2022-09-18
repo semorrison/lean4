@@ -21,7 +21,7 @@ open Meta
 /-
   Given an `inductionAlt` of the form
   ```
-  syntax inductionAltLHS := "| " (group("@"? ident) <|> "_") (ident <|> "_")*
+  syntax inductionAltLHS := "| " (group("@"? ident) <|> hole) (ident <|> hole)*
   syntax inductionAlt  := ppDedent(ppLine) inductionAltLHS+ " => " (hole <|> syntheticHole <|> tacticSeq)
   ```
 -/
@@ -30,11 +30,11 @@ private def getFirstAltLhs (alt : Syntax) : Syntax :=
 /-- Return `inductionAlt` name. It assumes `alt` does not have multiple `inductionAltLHS` -/
 private def getAltName (alt : Syntax) : Name :=
   let lhs := getFirstAltLhs alt
-  if lhs[1].hasArgs then lhs[1][1].getId.eraseMacroScopes else `_
+  if !lhs[1].isOfKind ``Parser.Term.hole then lhs[1][1].getId.eraseMacroScopes else `_
 /-- Return `true` if the first LHS of the given alternative contains `@`. -/
 private def altHasExplicitModifier (alt : Syntax) : Bool :=
   let lhs := getFirstAltLhs alt
-  lhs[1].hasArgs && !lhs[1][0].isNone
+  !lhs[1].isOfKind ``Parser.Term.hole && !lhs[1][0].isNone
 /-- Return the variables in the first LHS of the given alternative. -/
 private def getAltVars (alt : Syntax) : Array Syntax :=
   let lhs := getFirstAltLhs alt
@@ -492,7 +492,7 @@ private def shouldGeneralizeTarget (e : Expr) : MetaM Bool := do
 private def generalizeTargets (exprs : Array Expr) : TacticM (Array Expr) := do
   if (← withMainContext <| exprs.anyM (shouldGeneralizeTarget ·)) then
     liftMetaTacticAux fun mvarId => do
-      let (fvarIds, mvarId) ← generalize mvarId (exprs.map fun expr => { expr })
+      let (fvarIds, mvarId) ← mvarId.generalize (exprs.map fun expr => { expr })
       return (fvarIds.map mkFVar, [mvarId])
   else
     return exprs
@@ -543,7 +543,7 @@ def elabCasesTargets (targets : Array Syntax) : TacticM (Array Expr) :=
     if (← withMainContext <| args.anyM fun arg => shouldGeneralizeTarget arg.expr <||> pure arg.hName?.isSome) then
       liftMetaTacticAux fun mvarId => do
         let argsToGeneralize ← args.filterM fun arg => shouldGeneralizeTarget arg.expr <||> pure arg.hName?.isSome
-        let (fvarIdsNew, mvarId) ← generalize mvarId argsToGeneralize
+        let (fvarIdsNew, mvarId) ← mvarId.generalize argsToGeneralize
         let mut result := #[]
         let mut j := 0
         for arg in args do

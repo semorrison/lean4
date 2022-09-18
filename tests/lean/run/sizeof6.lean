@@ -1,4 +1,4 @@
-import Std
+import Lean.Data.PersistentArray
 
 inductive Foo where
   | mk (args : Std.PersistentArray Foo)

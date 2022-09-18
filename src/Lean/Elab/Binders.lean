@@ -3,7 +3,6 @@ Copyright (c) 2019 Microsoft Corporation. All rights reserved.
 Released under Apache 2.0 license as described in the file LICENSE.
 Authors: Leonardo de Moura
 -/
-import Lean.Parser.Term
 import Lean.Elab.Quotation.Precheck
 import Lean.Elab.Term
 import Lean.Elab.BindersUtil
@@ -39,10 +38,25 @@ private def expandOptIdent (stx : Syntax) : TermElabM Syntax := do
   else
     return stx[0]
 
+/-- Auxiliary datatype for elaborating binders. -/
 structure BinderView where
-  id : Syntax
+  /--
+  Position information provider for the Info Tree.
+  We currently do not track binder "macro expansion" steps in the info tree.
+  For example, suppose we expand a `_` into a fresh identifier. The fresh identifier
+  has synthetic position since it was not written by the user, and we would not get
+  hover information for the `_` because we also don't have this macro expansion step
+  stored in the info tree. Thus, we store the original `Syntax` in `ref`, and use
+  it when storing the binder information in the info tree.
+
+  Potential better solution: add a binder syntax category, an extensible `elabBinder`
+  (like we have `elabTerm`), and perform all macro expansion steps at `elabBinder` and
+  record them in the infro tree.
+  -/
+  ref  : Syntax
+  id   : Syntax
   type : Syntax
-  bi : BinderInfo
+  bi   : BinderInfo
 
 partial def quoteAutoTactic : Syntax → TermElabM Syntax
   | stx@(.ident ..) => throwErrorAt stx "invalid auto tactic, identifier is not allowed"
@@ -77,8 +91,10 @@ def declareTacticSyntax (tactic : Syntax) : TermElabM Name :=
 
 /--
 Expand `optional (binderTactic <|> binderDefault)`
+```
 def binderTactic  := leading_parser " := " >> " by " >> tacticParser
 def binderDefault := leading_parser " := " >> termParser
+```
 -/
 private def expandBinderModifier (type : Syntax) (optBinderModifier : Syntax) : TermElabM Syntax := do
   if optBinderModifier.isNone then
@@ -104,32 +120,36 @@ private def getBinderIds (ids : Syntax) : TermElabM (Array Syntax) :=
     else
       throwErrorAt id "identifier or `_` expected"
 
-private def matchBinder (stx : Syntax) : TermElabM (Array BinderView) := do
+/--
+Convert `stx` into an array of `BinderView`s.
+`stx` must be an indentifier, `_`, `explicitBinder`, `implicitBinder`, `strictImplicitBinder`, or `instBinder`.
+-/
+private def toBinderViews (stx : Syntax) : TermElabM (Array BinderView) := do
   let k := stx.getKind
   if stx.isIdent || k == ``hole then
     -- binderIdent
-    return #[{ id := (← expandBinderIdent stx), type := mkHole stx, bi := .default }]
+    return #[{ ref := stx, id := (← expandBinderIdent stx), type := mkHole stx, bi := .default }]
   else if k == ``Lean.Parser.Term.explicitBinder then
     -- `(` binderIdent+ binderType (binderDefault <|> binderTactic)? `)`
     let ids ← getBinderIds stx[1]
     let type        := stx[2]
     let optModifier := stx[3]
-    ids.mapM fun id => do pure { id := (← expandBinderIdent id), type := (← expandBinderModifier (expandBinderType id type) optModifier), bi := .default }
+    ids.mapM fun id => do pure { ref := id, id := (← expandBinderIdent id), type := (← expandBinderModifier (expandBinderType id type) optModifier), bi := .default }
   else if k == ``Lean.Parser.Term.implicitBinder then
     -- `{` binderIdent+ binderType `}`
     let ids ← getBinderIds stx[1]
     let type := stx[2]
-    ids.mapM fun id => do pure { id := (← expandBinderIdent id), type := expandBinderType id type, bi := .implicit }
+    ids.mapM fun id => do pure { ref := id, id := (← expandBinderIdent id), type := expandBinderType id type, bi := .implicit }
   else if k == ``Lean.Parser.Term.strictImplicitBinder then
     -- `⦃` binderIdent+ binderType `⦄`
     let ids ← getBinderIds stx[1]
     let type := stx[2]
-    ids.mapM fun id => do pure { id := (← expandBinderIdent id), type := expandBinderType id type, bi := .strictImplicit }
+    ids.mapM fun id => do pure { ref := id, id := (← expandBinderIdent id), type := expandBinderType id type, bi := .strictImplicit }
   else if k == ``Lean.Parser.Term.instBinder then
     -- `[` optIdent type `]`
     let id ← expandOptIdent stx[1]
     let type := stx[2]
-    return #[ { id := id, type := type, bi := .instImplicit } ]
+    return #[ { ref := id, id := id, type := type, bi := .instImplicit } ]
   else
     throwUnsupportedSyntax
 
@@ -149,6 +169,13 @@ register_builtin_option checkBinderAnnotations : Bool := {
   descr    := "check whether type is a class instance whenever the binder annotation `[...]` is used"
 }
 
+/-- Throw an error if `type` is not a valid local instance. -/
+private partial def checkLocalInstanceParameters (type : Expr) : TermElabM Unit := do
+  let .forallE n d b bi ← whnf type | return ()
+  if !b.hasLooseBVar 0 then
+    throwError "invalid parametric local instance, parameter with type{indentExpr d}\ndoes not have forward dependencies, type class resolution cannot use this kind of local instance because it will not be able to infer a value for this parameter."
+  withLocalDecl n bi d fun x => checkLocalInstanceParameters (b.instantiate1 x)
+
 private partial def elabBinderViews (binderViews : Array BinderView) (fvars : Array (Syntax × Expr)) (k : Array (Syntax × Expr) → TermElabM α)
     : TermElabM α :=
   let rec loop (i : Nat) (fvars : Array (Syntax × Expr)) : TermElabM α := do
@@ -160,8 +187,9 @@ private partial def elabBinderViews (binderViews : Array BinderView) (fvars : Ar
       if binderView.bi.isInstImplicit && checkBinderAnnotations.get (← getOptions) then
         unless (← isClass? type).isSome do
           throwErrorAt binderView.type "invalid binder annotation, type is not a class instance{indentExpr type}\nuse the command `set_option checkBinderAnnotations false` to disable the check"
+        withRef binderView.type <| checkLocalInstanceParameters type
       withLocalDecl binderView.id.getId binderView.bi type fun fvar => do
-        addLocalVarInfo binderView.id fvar
+        addLocalVarInfo binderView.ref fvar
         loop (i+1) (fvars.push (binderView.id, fvar))
     else
       k fvars
@@ -170,7 +198,7 @@ private partial def elabBinderViews (binderViews : Array BinderView) (fvars : Ar
 private partial def elabBindersAux (binders : Array Syntax) (k : Array (Syntax × Expr) → TermElabM α) : TermElabM α :=
   let rec loop (i : Nat) (fvars : Array (Syntax × Expr)) : TermElabM α := do
     if h : i < binders.size then
-      let binderViews ← matchBinder binders[i]
+      let binderViews ← toBinderViews binders[i]
       elabBinderViews binderViews fvars <| loop (i+1)
     else
       k fvars
@@ -204,6 +232,7 @@ def elabBinders (binders : Array Syntax) (k : Array Expr → TermElabM α) : Ter
 def elabBinder (binder : Syntax) (x : Expr → TermElabM α) : TermElabM α :=
   elabBinders #[binder] fun fvars => x fvars[0]!
 
+/-- If `binder` is a `_` or an identifier, return a `bracketedBinder` using `type` otherwise throw an exception. -/
 def expandSimpleBinderWithType (type : Term) (binder : Syntax) : MacroM Syntax :=
   if binder.isOfKind ``hole || binder.isIdent then
     `(bracketedBinder| ($binder : $type))
@@ -257,8 +286,16 @@ in the literature. -/
 private partial def getFunBinderIds? (stx : Syntax) : OptionT MacroM (Array Syntax) :=
   let convertElem (stx : Term) : OptionT MacroM Syntax :=
     match stx with
-    | `(_) => do let ident ← mkFreshIdent stx; pure ident
-    | `($id:ident) => return id
+    | `(_) =>
+      /-
+      We used to use `mkFreshIdent` here,
+      but it prevented us from obtaining hover info for `_` because the
+      fresh identifier would have a synthetic position, and synthetic positions
+      are ignored by the LSP server.
+      See comment at `BinderView.ref` for additional details.
+      -/
+      return stx
+    | `($_:ident) => return stx
     | _ => failure
   match stx with
   | `($f $args*) => do
@@ -320,7 +357,7 @@ partial def expandFunBinders (binders : Array Syntax) (body : Syntax) : MacroM (
               -- first ident to be sure that the syntax cannot possibly be a valid pattern. However, for
               -- consistency we apply the same check to all idents so that the possibility of shadowing
               -- a global decl is identical for all of them.
-              if (← idents.allM (List.isEmpty <$> Macro.resolveGlobalName ·.getId)) then
+              if (← idents.allM fun ident => return List.isEmpty (← Macro.resolveGlobalName ident.getId)) then
                 loop body (i+1) (newBinders ++ idents.map (mkExplicitBinder · (mkHole binder)))
               else
                 processAsPattern ()
@@ -376,7 +413,7 @@ private partial def elabFunBinderViews (binderViews : Array BinderView) (i : Nat
         We do not believe this is an useful feature, and it would complicate the logic here.
       -/
       let lctx  := s.lctx.mkLocalDecl fvarId binderView.id.getId type binderView.bi
-      addTermInfo' (lctx? := some lctx) (isBinder := true) binderView.id fvar
+      addTermInfo' (lctx? := some lctx) (isBinder := true) binderView.ref fvar
       let s ← withRef binderView.id <| propagateExpectedType fvar type s
       let s := { s with lctx }
       match (← isClass? type) with
@@ -390,7 +427,7 @@ private partial def elabFunBinderViews (binderViews : Array BinderView) (i : Nat
 
 partial def elabFunBindersAux (binders : Array Syntax) (i : Nat) (s : State) : TermElabM State := do
   if h : i < binders.size then
-    let binderViews ← matchBinder binders[i]
+    let binderViews ← toBinderViews binders[i]
     let s ← elabFunBinderViews binderViews 0 s
     elabFunBindersAux binders (i+1) s
   else
@@ -567,7 +604,7 @@ open Lean.Elab.Term.Quotation in
     let (binders, body, _) ← liftMacroM <| expandFunBinders binders body
     let mut ids := #[]
     for b in binders do
-      for v in ← matchBinder b do
+      for v in ← toBinderViews b do
         Quotation.withNewLocals ids <| precheck v.type
         ids := ids.push v.id.getId
     Quotation.withNewLocals ids <| precheck body

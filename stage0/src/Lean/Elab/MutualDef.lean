@@ -6,11 +6,13 @@ Authors: Leonardo de Moura
 import Lean.Parser.Term
 import Lean.Meta.Closure
 import Lean.Meta.Check
+import Lean.Meta.Transform
 import Lean.PrettyPrinter.Delaborator.Options
 import Lean.Elab.Command
 import Lean.Elab.Match
 import Lean.Elab.DefView
-import Lean.Elab.PreDefinition
+import Lean.Elab.Deriving.Basic
+import Lean.Elab.PreDefinition.Main
 import Lean.Elab.DeclarationRange
 
 namespace Lean.Elab
@@ -109,6 +111,22 @@ private def getPendindMVarErrorMessage (views : Array DefView) : String :=
   | none =>
     "\nwhen the resulting type of a declaration is explicitly provided, all holes (e.g., `_`) in the header are resolved before the declaration body is processed"
 
+/--
+Convert terms of the form `OfNat <type> (OfNat.ofNat Nat <num> ..)` into `OfNat <type> <num>`.
+We use this method on instance declaration types.
+The motivation is to address a recurrent mistake when users forget to use `nat_lit` when declaring `OfNat` instances.
+See issues #1389 and #875
+-/
+private def cleanupOfNat (type : Expr) : MetaM Expr := do
+  Meta.transform type fun e => do
+    if !e.isAppOfArity ``OfNat 2 then return .continue
+    let arg ← instantiateMVars e.appArg!
+    if !arg.isAppOfArity ``OfNat.ofNat 3 then return .continue
+    let argArgs := arg.getAppArgs
+    if !argArgs[0]!.isConstOf ``Nat then return .continue
+    let eNew := mkApp e.appFn! argArgs[1]!
+    return .done eNew
+
 /-- Elaborate only the declaration headers. We have to elaborate the headers first because we support mutually recursive declarations in Lean 4. -/
 private def elabHeaders (views : Array DefView) : TermElabM (Array DefViewElabHeader) := do
   let expandedDeclIds ← views.mapM fun view => withRef view.ref do
@@ -122,7 +140,7 @@ private def elabHeaders (views : Array DefView) : TermElabM (Array DefViewElabHe
         withDeclName declName <| withAutoBoundImplicit <| withLevelNames levelNames <|
           elabBindersEx view.binders.getArgs fun xs => do
             let refForElabFunType := view.value
-            let type ← match view.type? with
+            let mut type ← match view.type? with
               | some typeStx =>
                 let type ← elabType typeStx
                 registerFailedToInferDefTypeInfo type typeStx
@@ -134,11 +152,13 @@ private def elabHeaders (views : Array DefView) : TermElabM (Array DefViewElabHe
                 registerFailedToInferDefTypeInfo type refForElabFunType
                 pure type
             Term.synthesizeSyntheticMVarsNoPostponing
+            if view.isInstance then
+              type ← cleanupOfNat type
             let (binderIds, xs) := xs.unzip
             -- TODO: add forbidden predicate using `shortDeclName` from `views`
             let xs ← addAutoBoundImplicits xs
-            let type ← mkForallFVars' xs type
-            let type ← instantiateMVars type
+            type ← mkForallFVars' xs type
+            type ← instantiateMVars type
             let levelNames ← getLevelNames
             if view.type?.isSome then
               let pendingMVarIds ← getMVars type
@@ -186,6 +206,8 @@ private def expandWhereStructInst : Macro
         let mut val := val
         if let some ty := ty? then
           val ← `(($val : $ty))
+        -- HACK: this produces invalid syntax, but the fun elaborator supports letIdBinders as well
+        have : Coe (TSyntax ``letIdBinder) (TSyntax ``funBinder) := ⟨(⟨·⟩)⟩
         val ← if binders.size > 0 then `(fun $binders* => $val) else pure val
         `(structInstField|$id:ident := $val)
       | _ => Macro.throwUnsupported
@@ -509,14 +531,14 @@ private partial def mkClosureForAux (toProcess : Array FVarId) : StateRefT Closu
           newLetDecls   := s.newLetDecls.push <| LocalDecl.ldecl default fvarId userName type val false,
           /- We don't want to interleave let and lambda declarations in our closure. So, we expand any occurrences of fvarId
              at `newLocalDecls` and `localDecls` -/
-          newLocalDecls := s.newLocalDecls.map (replaceFVarIdAtLocalDecl fvarId val)
-          localDecls := s.localDecls.map (replaceFVarIdAtLocalDecl fvarId val)
+          newLocalDecls := s.newLocalDecls.map (·.replaceFVarId fvarId val)
+          localDecls := s.localDecls.map (·.replaceFVarId fvarId val)
         }
         mkClosureForAux (pushNewVars toProcess (collectFVars (collectFVars {} type) val))
 
 private partial def mkClosureFor (freeVars : Array FVarId) (localDecls : Array LocalDecl) : TermElabM ClosureState := do
   let (_, s) ← mkClosureForAux freeVars |>.run { localDecls := localDecls }
-  pure { s with
+  return { s with
     newLocalDecls := s.newLocalDecls.reverse
     newLetDecls   := s.newLetDecls.reverse
     exprArgs      := s.exprArgs.reverse
@@ -533,10 +555,28 @@ private def mkLetRecClosureFor (toLift : LetRecToLift) (freeVars : Array FVarId)
   let lctx := toLift.lctx
   withLCtx lctx toLift.localInstances do
   lambdaTelescope toLift.val fun xs val => do
+    /-
+      Recall that `toLift.type` and `toLift.value` may have different binder annotations.
+      See issue #1377 for an example.
+    -/
+    let userNameAndBinderInfos ← forallBoundedTelescope toLift.type xs.size fun xs _ =>
+      xs.mapM fun x => do
+        let localDecl ← x.fvarId!.getDecl
+        return (localDecl.userName, localDecl.binderInfo)
+    /- Auxiliary map for preserving binder user-facind names and `BinderInfo` for types. -/
+    let mut userNameBinderInfoMap : FVarIdMap (Name × BinderInfo) := {}
+    for x in xs, (userName, bi) in userNameAndBinderInfos do
+      userNameBinderInfoMap := userNameBinderInfoMap.insert x.fvarId! (userName, bi)
     let type ← instantiateForall toLift.type xs
     let lctx ← getLCtx
     let s ← mkClosureFor freeVars <| xs.map fun x => lctx.get! x.fvarId!
-    let type := Closure.mkForall s.localDecls <| Closure.mkForall s.newLetDecls type
+    /- Apply original type binder info and user-facing names to local declarations. -/
+    let typeLocalDecls := s.localDecls.map fun localDecl =>
+      if let some (userName, bi) := userNameBinderInfoMap.find? localDecl.fvarId then
+        localDecl.setBinderInfo bi |>.setUserName userName
+      else
+        localDecl
+    let type := Closure.mkForall typeLocalDecls <| Closure.mkForall s.newLetDecls type
     let val  := Closure.mkLambda s.localDecls <| Closure.mkLambda s.newLetDecls val
     let c    := mkAppN (Lean.mkConst toLift.declName) s.exprArgs
     toLift.mvarId.assign c
@@ -671,69 +711,22 @@ private def levelMVarToParamHeaders (views : Array DefView) (headers : Array Def
     let mut newHeaders := #[]
     for view in views, header in headers do
       if view.kind.isTheorem then
-        newHeaders := newHeaders.push { header with type := (← levelMVarToParam' header.type) }
+        newHeaders ←
+          withLevelNames header.levelNames do
+            return newHeaders.push { header with type := (← levelMVarToParam header.type), levelNames := (← getLevelNames) }
       else
         newHeaders := newHeaders.push header
     return newHeaders
   let newHeaders ← (process).run' 1
   newHeaders.mapM fun header => return { header with type := (← instantiateMVars header.type) }
 
-/-- Result for `mkInst?` -/
-structure MkInstResult where
-  instVal   : Expr
-  instType  : Expr
-  outParams : Array Expr := #[]
-
-/--
-  Construct an instance for `className out₁ ... outₙ type`.
-  The method support classes with a prefix of `outParam`s (e.g. `MonadReader`). -/
-private partial def mkInst? (className : Name) (type : Expr) : MetaM (Option MkInstResult) := do
-  let rec go? (instType instTypeType : Expr) (outParams : Array Expr) : MetaM (Option MkInstResult) := do
-    let instTypeType ← whnfD instTypeType
-    unless instTypeType.isForall do
-      return none
-    let d := instTypeType.bindingDomain!
-    if d.isOutParam then
-      let mvar ← mkFreshExprMVar d
-      go? (mkApp instType mvar) (instTypeType.bindingBody!.instantiate1 mvar) (outParams.push mvar)
-    else
-      unless (← isDefEqGuarded (← inferType type) d) do
-        return none
-      let instType ← instantiateMVars (mkApp instType type)
-      let instVal ← synthInstance instType
-      return some { instVal, instType, outParams }
-  let instType ← mkConstWithFreshMVarLevels className
-  go? instType (← inferType instType) #[]
-
-def processDefDeriving (className : Name) (declName : Name) : TermElabM Bool := do
-  try
-    let ConstantInfo.defnInfo info ← getConstInfo declName | return false
-    let some result ← mkInst? className info.value | return false
-    let instTypeNew := mkApp result.instType.appFn! (Lean.mkConst declName (info.levelParams.map mkLevelParam))
-    Meta.check instTypeNew
-    let instName ← liftMacroM <| mkUnusedBaseName (declName.appendBefore "inst" |>.appendAfter className.getString!)
-    addAndCompile <| Declaration.defnDecl {
-      name        := instName
-      levelParams := info.levelParams
-      type        := (← instantiateMVars instTypeNew)
-      value       := (← instantiateMVars result.instVal)
-      hints       := info.hints
-      safety      := info.safety
-    }
-    addInstance instName AttributeKind.global (eval_prio default)
-    return true
-  catch _ =>
-    return false
-
 /-- Remove auxiliary match discriminant let-declarations. -/
 def eraseAuxDiscr (e : Expr) : CoreM Expr := do
-  Core.transform e fun e => match e with
-    | Expr.letE n _ v b .. =>
+  Core.transform e fun e => do
+    if let .letE n _ v b .. := e then
       if isAuxDiscrName n then
-        return TransformStep.visit (b.instantiate1 v)
-      else
-        return TransformStep.visit e
-    | e => return TransformStep.visit e
+        return .visit (b.instantiate1 v)
+    return .continue
 
 partial def checkForHiddenUnivLevels (allUserLevelNames : List Name) (preDefs : Array PreDefinition) : TermElabM Unit :=
   unless (← MonadLog.hasErrors) do
@@ -804,7 +797,7 @@ where
         let preDefs ← MutualClosure.main vars headers funFVars values letRecsToLift
         for preDef in preDefs do
           trace[Elab.definition] "{preDef.declName} : {preDef.type} :=\n{preDef.value}"
-        let preDefs ← levelMVarToParamPreDecls preDefs
+        let preDefs ← withLevelNames allUserLevelNames <| levelMVarToParamPreDecls preDefs
         let preDefs ← instantiateMVarsAtPreDecls preDefs
         let preDefs ← fixLevelParams preDefs scopeLevelNames allUserLevelNames
         let preDefs ← preDefs.mapM fun preDef =>
@@ -836,7 +829,7 @@ def elabMutualDef (ds : Array Syntax) (hints : TerminationHints) : CommandElabM 
     if ds.size > 1 && modifiers.isNonrec then
       throwErrorAt d "invalid use of 'nonrec' modifier in 'mutual' block"
     mkDefView modifiers d[1]
-  runTermElabM none fun vars => Term.elabMutualDef vars views hints
+  runTermElabM fun vars => Term.elabMutualDef vars views hints
 
 end Command
 end Lean.Elab

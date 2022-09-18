@@ -23,56 +23,79 @@ private def ensureValidNamespace (name : Name) : MacroM Unit := do
   | .num .. => Macro.throwError s!"invalid namespace '{name}', it must not contain numeric parts"
   | .anonymous => return ()
 
-/-- Auxiliary function for `expandDeclNamespace?` -/
-private def expandDeclIdNamespace? (declId : Syntax) : MacroM (Option (Name × Syntax)) := do
+private def setDeclIdName (declId : Syntax) (nameNew : Name) : Syntax :=
   let (id, _) := expandDeclIdCore declId
-  if (`_root_).isPrefixOf id then
-    ensureValidNamespace (id.replacePrefix `_root_ Name.anonymous)
-    return none
-  let scpView := extractMacroScopes id
-  match scpView.name with
-  | .str .anonymous _ => return none
-  | .str pre s        =>
-    ensureValidNamespace pre
-    let nameNew := { scpView with name := Name.mkSimple s }.review
-    -- preserve "original" info, if any, so that hover etc. on the namespaced
-    -- name access the info tree node of the declaration name
-    let id := mkIdent nameNew |>.raw.setInfo declId.getHeadInfo
-    if declId.isIdent then
-      return some (pre, id)
+  -- We should not update the name of `def _root_.` declarations
+  assert! !(`_root_).isPrefixOf id
+  let idStx := mkIdent nameNew |>.raw.setInfo declId.getHeadInfo
+  if declId.isIdent then
+    idStx
+  else
+    declId.setArg 0 idStx
+
+/-- Return `true` if `stx` is a `Command.declaration`, and it is a definition that always has a name. -/
+private def isNamedDef (stx : Syntax) : Bool :=
+  if !stx.isOfKind ``Lean.Parser.Command.declaration then
+    false
+  else
+    let decl := stx[1]
+    let k := decl.getKind
+    k == ``Lean.Parser.Command.abbrev ||
+    k == ``Lean.Parser.Command.def ||
+    k == ``Lean.Parser.Command.theorem ||
+    k == ``Lean.Parser.Command.opaque ||
+    k == ``Lean.Parser.Command.axiom ||
+    k == ``Lean.Parser.Command.inductive ||
+    k == ``Lean.Parser.Command.classInductive ||
+    k == ``Lean.Parser.Command.structure
+
+/-- Return `true` if `stx` is an `instance` declaration command -/
+private def isInstanceDef (stx : Syntax) : Bool :=
+  stx.isOfKind ``Lean.Parser.Command.declaration &&
+  stx[1].getKind == ``Lean.Parser.Command.instance
+
+/-- Return `some name` if `stx` is a definition named `name` -/
+private def getDefName? (stx : Syntax) : Option Name := do
+  if isNamedDef stx then
+    let (id, _) := expandDeclIdCore stx[1][1]
+    some id
+  else if isInstanceDef stx then
+    let optDeclId := stx[1][3]
+    if optDeclId.isNone then none
     else
-      return some (pre, declId.setArg 0 id)
-  | _ => return none
+      let (id, _) := expandDeclIdCore optDeclId[0]
+      some id
+  else
+    none
+
+/--
+Update the name of the given definition.
+This function assumes `stx` is not a nameless instance.
+-/
+private def setDefName (stx : Syntax) (name : Name) : Syntax :=
+  if isNamedDef stx then
+    stx.setArg 1 <| stx[1].setArg 1 <| setDeclIdName stx[1][1] name
+  else if isInstanceDef stx then
+    -- We never set the name of nameless instance declarations
+    assert! !stx[1][3].isNone
+    stx.setArg 1 <| stx[1].setArg 3 <| stx[1][3].setArg 0 <| setDeclIdName stx[1][3][0] name
+  else
+    stx
 
 /--
   Given declarations such as `@[...] def Foo.Bla.f ...` return `some (Foo.Bla, @[...] def f ...)`
   Remark: if the id starts with `_root_`, we return `none`.
 -/
 private def expandDeclNamespace? (stx : Syntax) : MacroM (Option (Name × Syntax)) := do
-  if !stx.isOfKind `Lean.Parser.Command.declaration then
+  let some name := getDefName? stx | return none
+  if (`_root_).isPrefixOf name then
+    ensureValidNamespace (name.replacePrefix `_root_ Name.anonymous)
     return none
-  else
-    let decl := stx[1]
-    let k := decl.getKind
-    if k == ``Lean.Parser.Command.abbrev ||
-       k == ``Lean.Parser.Command.def ||
-       k == ``Lean.Parser.Command.theorem ||
-       k == ``Lean.Parser.Command.opaque ||
-       k == ``Lean.Parser.Command.axiom ||
-       k == ``Lean.Parser.Command.inductive ||
-       k == ``Lean.Parser.Command.classInductive ||
-       k == ``Lean.Parser.Command.structure then
-      match (← expandDeclIdNamespace? decl[1]) with
-      | some (ns, declId) => return some (ns, stx.setArg 1 (decl.setArg 1 declId))
-      | none              => return none
-    else if k == ``Lean.Parser.Command.instance then
-      let optDeclId := decl[3]
-      if optDeclId.isNone then return none
-      else match (← expandDeclIdNamespace? optDeclId[0]) with
-        | some (ns, declId) => return some (ns, stx.setArg 1 (decl.setArg 3 (optDeclId.setArg 0 declId)))
-        | none              => return none
-    else
-      return none
+  let scpView := extractMacroScopes name
+  match scpView.name with
+  | .str .anonymous _ => return none
+  | .str pre shortName => return some (pre, setDefName stx { scpView with name := shortName }.review)
+  | _ => return none
 
 def elabAxiom (modifiers : Modifiers) (stx : Syntax) : CommandElabM Unit := do
   -- leading_parser "axiom " >> declId >> declSig
@@ -81,34 +104,35 @@ def elabAxiom (modifiers : Modifiers) (stx : Syntax) : CommandElabM Unit := do
   let scopeLevelNames ← getLevelNames
   let ⟨_, declName, allUserLevelNames⟩ ← expandDeclId declId modifiers
   addDeclarationRanges declName stx
-  runTermElabM declName fun vars => Term.withLevelNames allUserLevelNames <| Term.elabBinders binders.getArgs fun xs => do
-    Term.applyAttributesAt declName modifiers.attrs AttributeApplicationTime.beforeElaboration
-    let type ← Term.elabType typeStx
-    Term.synthesizeSyntheticMVarsNoPostponing
-    let type ← instantiateMVars type
-    let type ← mkForallFVars xs type
-    let type ← mkForallFVars vars type (usedOnly := true)
-    let (type, _) ← Term.levelMVarToParam type
-    let usedParams  := collectLevelParams {} type |>.params
-    match sortDeclLevelParams scopeLevelNames allUserLevelNames usedParams with
-    | Except.error msg      => throwErrorAt stx msg
-    | Except.ok levelParams =>
+  runTermElabM fun vars =>
+    Term.withDeclName declName <| Term.withLevelNames allUserLevelNames <| Term.elabBinders binders.getArgs fun xs => do
+      Term.applyAttributesAt declName modifiers.attrs AttributeApplicationTime.beforeElaboration
+      let type ← Term.elabType typeStx
+      Term.synthesizeSyntheticMVarsNoPostponing
       let type ← instantiateMVars type
-      let decl := Declaration.axiomDecl {
-        name        := declName,
-        levelParams := levelParams,
-        type        := type,
-        isUnsafe    := modifiers.isUnsafe
-      }
-      trace[Elab.axiom] "{declName} : {type}"
-      Term.ensureNoUnassignedMVars decl
-      addDecl decl
-      withSaveInfoContext do  -- save new env
-        Term.addTermInfo' declId (← mkConstWithLevelParams declName) (isBinder := true)
-      Term.applyAttributesAt declName modifiers.attrs AttributeApplicationTime.afterTypeChecking
-      if isExtern (← getEnv) declName then
-        compileDecl decl
-      Term.applyAttributesAt declName modifiers.attrs AttributeApplicationTime.afterCompilation
+      let type ← mkForallFVars xs type
+      let type ← mkForallFVars vars type (usedOnly := true)
+      let type ← Term.levelMVarToParam type
+      let usedParams  := collectLevelParams {} type |>.params
+      match sortDeclLevelParams scopeLevelNames allUserLevelNames usedParams with
+      | Except.error msg      => throwErrorAt stx msg
+      | Except.ok levelParams =>
+        let type ← instantiateMVars type
+        let decl := Declaration.axiomDecl {
+          name        := declName,
+          levelParams := levelParams,
+          type        := type,
+          isUnsafe    := modifiers.isUnsafe
+        }
+        trace[Elab.axiom] "{declName} : {type}"
+        Term.ensureNoUnassignedMVars decl
+        addDecl decl
+        withSaveInfoContext do  -- save new env
+          Term.addTermInfo' declId (← mkConstWithLevelParams declName) (isBinder := true)
+        Term.applyAttributesAt declName modifiers.attrs AttributeApplicationTime.afterTypeChecking
+        if isExtern (← getEnv) declName then
+          compileDecl decl
+        Term.applyAttributesAt declName modifiers.attrs AttributeApplicationTime.afterCompilation
 
 /-
 leading_parser "inductive " >> declId >> optDeclSig >> optional ":=" >> many ctor
@@ -121,29 +145,27 @@ private def inductiveSyntaxToView (modifiers : Modifiers) (decl : Syntax) : Comm
   let ⟨name, declName, levelNames⟩ ← expandDeclId declId modifiers
   addDeclarationRanges declName decl
   let ctors      ← decl[4].getArgs.mapM fun ctor => withRef ctor do
-    -- def ctor := leading_parser " | " >> declModifiers >> ident >> optDeclSig
-    let ctorModifiers ← elabModifiers ctor[1]
+    -- def ctor := leading_parser optional docComment >> "\n| " >> declModifiers >> rawIdent >> optDeclSig
+    let mut ctorModifiers ← elabModifiers ctor[2]
+    if let some leadingDocComment := ctor[0].getOptional? then
+      if ctorModifiers.docString?.isSome then
+        logErrorAt leadingDocComment "duplicate doc string"
+      ctorModifiers := { ctorModifiers with docString? := TSyntax.getDocString ⟨leadingDocComment⟩ }
     if ctorModifiers.isPrivate && modifiers.isPrivate then
       throwError "invalid 'private' constructor in a 'private' inductive datatype"
     if ctorModifiers.isProtected && modifiers.isPrivate then
       throwError "invalid 'protected' constructor in a 'private' inductive datatype"
     checkValidCtorModifier ctorModifiers
-    let ctorName := ctor.getIdAt 2
+    let ctorName := ctor.getIdAt 3
     let ctorName := declName ++ ctorName
-    let ctorName ← withRef ctor[2] <| applyVisibility ctorModifiers.visibility ctorName
-    let (binders, type?) := expandOptDeclSig ctor[3]
+    let ctorName ← withRef ctor[3] <| applyVisibility ctorModifiers.visibility ctorName
+    let (binders, type?) := expandOptDeclSig ctor[4]
     addDocString' ctorName ctorModifiers.docString?
-    addAuxDeclarationRanges ctorName ctor ctor[2]
+    addAuxDeclarationRanges ctorName ctor ctor[3]
     return { ref := ctor, modifiers := ctorModifiers, declName := ctorName, binders := binders, type? := type? : CtorView }
-  let mut computedFields := #[]
-  let mut classes := #[]
-  if decl.getNumArgs == 6 then
-    -- TODO: remove after stage0 update
-    classes ← getOptDerivingClasses decl[5]
-  else
-    computedFields ← (decl[5].getOptional?.map (·[1].getArgs) |>.getD #[]).mapM fun cf => withRef cf do
-      return { ref := cf, modifiers := cf[0], fieldId := cf[1].getId, type := ⟨cf[3]⟩, matchAlts := ⟨cf[4]⟩ }
-    classes ← getOptDerivingClasses decl[6]
+  let computedFields ← (decl[5].getOptional?.map (·[1].getArgs) |>.getD #[]).mapM fun cf => withRef cf do
+    return { ref := cf, modifiers := cf[0], fieldId := cf[1].getId, type := ⟨cf[3]⟩, matchAlts := ⟨cf[4]⟩ }
+  let classes ← getOptDerivingClasses decl[6]
   return {
     ref             := decl
     shortDeclName   := name
@@ -242,25 +264,48 @@ private partial def splitMutualPreamble (elems : Array Syntax) : Option (Array S
       none -- a `mutual` block containing only preamble commands is not a valid `mutual` block
   loop 0
 
+/--
+Find the common namespace for the given names.
+Example:
+```
+findCommonPrefix [`Lean.Elab.eval, `Lean.mkConst, `Lean.Elab.Tactic.evalTactic]
+-- `Lean
+```
+-/
+def findCommonPrefix (ns : List Name) : Name :=
+  match ns with
+  | [] => .anonymous
+  | n :: ns => go n ns
+where
+  go (n : Name) (ns : List Name) : Name :=
+    match n with
+    | .anonymous => .anonymous
+    | _ => match ns with
+      | [] => n
+      | n' :: ns => go (findCommon n.components n'.components) ns
+  findCommon (as bs : List Name) : Name :=
+    match as, bs with
+    | a :: as, b :: bs => if a == b then a ++ findCommon as bs else .anonymous
+    | _, _ => .anonymous
+
+
 @[builtinMacro Lean.Parser.Command.mutual]
 def expandMutualNamespace : Macro := fun stx => do
-  let mut ns?      := none
-  let mut elemsNew := #[]
+  let mut nss := #[]
   for elem in stx[1].getArgs do
-    match ns?, (← expandDeclNamespace? elem) with
-    | _, none                         => elemsNew := elemsNew.push elem
-    | none, some (ns, elem)           => ns? := some ns; elemsNew := elemsNew.push elem
-    | some nsCurr, some (nsNew, elem) =>
-      if nsCurr == nsNew then
-        elemsNew := elemsNew.push elem
-      else
-        Macro.throwErrorAt elem s!"conflicting namespaces in mutual declaration, using namespace '{nsNew}', but used '{nsCurr}' in previous declaration"
-  match ns? with
-  | some ns =>
-    let ns := mkIdentFrom stx ns
-    let stxNew := stx.setArg 1 (mkNullNode elemsNew)
-    `(namespace $ns $(⟨stxNew⟩) end $ns)
-  | none => Macro.throwUnsupported
+    match (← expandDeclNamespace? elem) with
+    | none        => Macro.throwUnsupported
+    | some (n, _) => nss := nss.push n
+  let common := findCommonPrefix nss.toList
+  if common.isAnonymous then Macro.throwUnsupported
+  let elemsNew ← stx[1].getArgs.mapM fun elem => do
+    let some name := getDefName? elem | unreachable!
+    let view := extractMacroScopes name
+    let nameNew := { view with name := view.name.replacePrefix common .anonymous }.review
+    return setDefName elem nameNew
+  let ns := mkIdentFrom stx common
+  let stxNew := stx.setArg 1 (mkNullNode elemsNew)
+  `(namespace $ns $(⟨stxNew⟩) end $ns)
 
 @[builtinMacro Lean.Parser.Command.mutual]
 def expandMutualElement : Macro := fun stx => do
@@ -320,7 +365,7 @@ def elabMutual : CommandElab := fun stx => do
       attrInsts := attrInsts.push attrKindStx
   let attrs ← elabAttrs attrInsts
   let idents := stx[4].getArgs
-  for ident in idents do withRef ident <| liftTermElabM none do
+  for ident in idents do withRef ident <| liftTermElabM do
     let declName ← resolveGlobalConstNoOverloadWithInfo ident
     Term.applyAttributes declName attrs
     for attrName in toErase do
@@ -332,12 +377,12 @@ def elabMutual : CommandElab := fun stx => do
     if let (some id, some type) := (id?, type?) then
       let `(Parser.Command.declModifiersT| $[$doc?:docComment]? $[@[$attrs?,*]]? $(vis?)? $[unsafe%$unsafe?]?) := stx[0]
         | Macro.throwErrorAt declModifiers "invalid initialization command, unexpected modifiers"
-      `($[unsafe%$unsafe?]? def initFn : IO $type := do $doSeq
+      `($[unsafe%$unsafe?]? def initFn : IO $type := with_decl_name% ?$id do $doSeq
         $[$doc?:docComment]? @[$attrId:ident initFn, $(attrs?.getD ∅),*] $(vis?)? opaque $id : $type)
     else
-      let `(Parser.Command.declModifiersT| ) := declModifiers
+      let `(Parser.Command.declModifiersT| $[$doc?:docComment]? ) := declModifiers
         | Macro.throwErrorAt declModifiers "invalid initialization command, unexpected modifiers"
-      `(@[$attrId:ident] def initFn : IO Unit := do $doSeq)
+      `($[$doc?:docComment]? @[$attrId:ident] def initFn : IO Unit := do $doSeq)
   | _ => Macro.throwUnsupported
 
 builtin_initialize

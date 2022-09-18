@@ -3,10 +3,12 @@ Copyright (c) 2020 Microsoft Corporation. All rights reserved.
 Released under Apache 2.0 license as described in the file LICENSE.
 Authors: Leonardo de Moura
 -/
+import Lean.Util.SCC
 import Lean.Elab.PreDefinition.Basic
 import Lean.Elab.PreDefinition.Structural
-import Lean.Elab.PreDefinition.WF
+import Lean.Elab.PreDefinition.WF.Main
 import Lean.Elab.PreDefinition.MkInhabitant
+
 namespace Lean.Elab
 open Meta
 open Term
@@ -73,9 +75,9 @@ private def betaReduceLetRecApps (preDefs : Array PreDefinition) : MetaM (Array 
   preDefs.mapM fun preDef => do
     let value ← transform preDef.value fun e => do
       if e.isApp && e.getAppFn.isLambda && e.getAppArgs.all fun arg => arg.getAppFn.isConst && preDefs.any fun preDef => preDef.declName == arg.getAppFn.constName! then
-        return TransformStep.visit e.headBeta
+        return .visit e.headBeta
       else
-        return TransformStep.visit e
+        return .continue
     return { preDef with value }
 
 private def addAsAxioms (preDefs : Array PreDefinition) : TermElabM Unit := do

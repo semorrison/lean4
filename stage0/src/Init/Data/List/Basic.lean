@@ -143,7 +143,7 @@ theorem reverseAux_eq_append (as bs : List α) : reverseAux as bs = reverseAux a
   | nil => simp
   | cons a as ih => simp [ih]; rw [append_assoc]
 
-theorem mapTRAux_eq (f : α → β) (as : List α) (bs : List β) : mapTRAux f as bs =  bs.reverse ++ map f as := by
+theorem mapTRAux_eq (f : α → β) (as : List α) (bs : List β) : mapTRAux f as bs = bs.reverse ++ map f as := by
   induction as generalizing bs with
   | nil => simp [mapTRAux, map]
   | cons a as ih =>
@@ -151,14 +151,9 @@ theorem mapTRAux_eq (f : α → β) (as : List α) (bs : List β) : mapTRAux f a
     rw [ih (f a :: bs), reverse_cons, append_assoc]
     rfl
 
-@[csimp] theorem map_eq_mapTR : @map = @mapTR := by
-  apply funext; intro α; apply funext; intro β; apply funext; intro f; apply funext; intro as
-  simp [mapTR, mapTRAux_eq]
-
-@[specialize] def map₂ (f : α → β → γ) : List α → List β → List γ
-  | [],    _     => []
-  | _,     []    => []
-  | a::as, b::bs => f a b :: map₂ f as bs
+@[csimp] theorem map_eq_mapTR : @map = @mapTR :=
+  funext fun α => funext fun β => funext fun f => funext fun as => by
+    simp [mapTR, mapTRAux_eq]
 
 def join : List (List α) → List α
   | []      => []
@@ -367,7 +362,7 @@ def or  (bs : List Bool) : Bool := bs.any id
 
 def and (bs : List Bool) : Bool := bs.all id
 
-def zipWith (f : α → β → γ) : List α → List β → List γ
+@[specialize] def zipWith (f : α → β → γ) : List α → List β → List γ
   | x::xs, y::ys => f x y :: zipWith f xs ys
   | _,     _     => []
 
@@ -408,11 +403,6 @@ def enumFrom : Nat → List α → List (Nat × α)
   | n, x :: xs   => (n, x) :: enumFrom (n + 1) xs
 
 def enum : List α → List (Nat × α) := enumFrom 0
-
-def init : List α → List α
-  | []   => []
-  | [_]  => []
-  | a::l => a::init l
 
 def intersperse (sep : α) : List α → List α
   | []    => []

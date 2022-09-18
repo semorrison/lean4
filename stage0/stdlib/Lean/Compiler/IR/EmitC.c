@@ -72,7 +72,6 @@ LEAN_EXPORT lean_object* l_List_foldl___at_Lean_IR_EmitC_emitFnDecls___spec__1__
 static lean_object* l_Lean_IR_EmitC_emitFileHeader___closed__11;
 extern lean_object* l_Lean_builtinInitAttr;
 static lean_object* l_Nat_forM_loop___at_Lean_IR_EmitC_emitJmp___spec__2___closed__1;
-LEAN_EXPORT lean_object* l_Nat_anyAux___at_Lean_IR_EmitC_overwriteParam___spec__1___boxed(lean_object*, lean_object*, lean_object*, lean_object*, lean_object*);
 LEAN_EXPORT lean_object* l_Lean_IR_EmitC_emitFnDeclAux___boxed(lean_object*, lean_object*, lean_object*, lean_object*, lean_object*);
 static lean_object* l_Lean_IR_EmitC_emitAllocCtor___closed__1;
 LEAN_EXPORT lean_object* l_Lean_IR_EmitC_emitCName___boxed(lean_object*, lean_object*, lean_object*);
@@ -125,7 +124,6 @@ static lean_object* l_Lean_IR_EmitC_emitFnDeclAux___closed__2;
 static lean_object* l_Lean_IR_EmitC_emitApp___closed__3;
 static lean_object* l_Lean_IR_EmitC_emitMainFn___lambda__1___closed__17;
 LEAN_EXPORT lean_object* lean_ir_emit_c(lean_object*, lean_object*);
-LEAN_EXPORT uint8_t l_Nat_anyAux___at_Lean_IR_EmitC_overwriteParam___spec__1(lean_object*, lean_object*, lean_object*, lean_object*, lean_object*);
 static lean_object* l_Lean_IR_EmitC_emitApp___closed__5;
 LEAN_EXPORT lean_object* l_Lean_IR_EmitC_emitLhs___boxed(lean_object*, lean_object*, lean_object*);
 LEAN_EXPORT lean_object* l_Lean_IR_EmitC_emitMainFn___lambda__1(lean_object*, lean_object*, lean_object*, lean_object*, lean_object*, lean_object*);
@@ -203,13 +201,14 @@ LEAN_EXPORT lean_object* l_Lean_IR_EmitC_main(lean_object*, lean_object*);
 LEAN_EXPORT lean_object* l_Lean_IR_EmitC_emit___rarg(lean_object*, lean_object*, lean_object*, lean_object*);
 LEAN_EXPORT lean_object* l_Array_foldlMUnsafe_fold___at_Lean_IR_EmitC_emitFnDeclAux___spec__2(lean_object*, size_t, size_t, lean_object*);
 LEAN_EXPORT lean_object* l_Nat_forM_loop___at_Lean_IR_EmitC_emitFnDeclAux___spec__1(lean_object*, lean_object*, lean_object*, lean_object*, lean_object*, lean_object*);
+LEAN_EXPORT uint8_t l_Nat_anyTR_loop___at_Lean_IR_EmitC_overwriteParam___spec__3(lean_object*, lean_object*, lean_object*, lean_object*, lean_object*);
 LEAN_EXPORT lean_object* l_Lean_IR_EmitC_emitIf(lean_object*, lean_object*, lean_object*, lean_object*, lean_object*, lean_object*, lean_object*);
+LEAN_EXPORT lean_object* l_Nat_anyTR_loop___at_Lean_IR_EmitC_overwriteParam___spec__2___boxed(lean_object*, lean_object*, lean_object*, lean_object*);
 LEAN_EXPORT lean_object* l_Lean_IR_EmitC_emitReset(lean_object*, lean_object*, lean_object*, lean_object*, lean_object*);
 static lean_object* l_Nat_forM_loop___at_Lean_IR_EmitC_emitFnDeclAux___spec__1___lambda__1___closed__3;
 static lean_object* l_Lean_IR_EmitC_emitMainFn___lambda__2___closed__26;
 lean_object* l_Lean_IR_AltCore_body(lean_object*);
 LEAN_EXPORT lean_object* l_Nat_forM_loop___at_Lean_IR_EmitC_emitCtorSetArgs___spec__1(lean_object*, lean_object*, lean_object*, lean_object*, lean_object*, lean_object*, lean_object*);
-LEAN_EXPORT uint8_t l_Nat_anyAux___at_Lean_IR_EmitC_overwriteParam___spec__2(lean_object*, lean_object*, lean_object*, lean_object*);
 LEAN_EXPORT lean_object* l_Lean_IR_EmitC_argToCString(lean_object*);
 static lean_object* l_Lean_IR_EmitC_emitFileHeader___closed__6;
 LEAN_EXPORT lean_object* l_Lean_IR_EmitC_emitMainFn___lambda__3(lean_object*, lean_object*, lean_object*, uint8_t, lean_object*, lean_object*, lean_object*);
@@ -251,7 +250,6 @@ LEAN_EXPORT lean_object* l_Nat_forM_loop___at_Lean_IR_EmitC_emitFnDeclAux___spec
 static lean_object* l_Lean_IR_EmitC_emitExternCall___closed__1;
 LEAN_EXPORT lean_object* l_Nat_forM_loop___at_Lean_IR_EmitC_emitTailCall___spec__1___boxed(lean_object*, lean_object*, lean_object*, lean_object*, lean_object*, lean_object*, lean_object*);
 LEAN_EXPORT lean_object* l_Lean_IR_EmitC_toHexDigit___boxed(lean_object*);
-LEAN_EXPORT lean_object* l_Nat_anyAux___at_Lean_IR_EmitC_overwriteParam___spec__2___boxed(lean_object*, lean_object*, lean_object*, lean_object*);
 static lean_object* l_Lean_IR_EmitC_emitNumLit___closed__3;
 LEAN_EXPORT lean_object* l_Lean_IR_EmitC_emitFnDeclAux___lambda__3(lean_object*, lean_object*, lean_object*, lean_object*, lean_object*, lean_object*, lean_object*);
 LEAN_EXPORT lean_object* l_Lean_IR_EmitC_Context_mainParams___default;
@@ -264,7 +262,6 @@ LEAN_EXPORT lean_object* l_Lean_IR_EmitC_emitLhs(lean_object*, lean_object*, lea
 LEAN_EXPORT lean_object* l_Lean_IR_EmitC_emitCtor___boxed(lean_object*, lean_object*, lean_object*, lean_object*, lean_object*);
 LEAN_EXPORT lean_object* l_Lean_IR_EmitC_emitSimpleExternalCall___boxed(lean_object*, lean_object*, lean_object*, lean_object*, lean_object*);
 static lean_object* l_Lean_IR_EmitC_emitBoxFn___closed__4;
-lean_object* l_panic___at_Lean_TSyntax_getString___spec__1(lean_object*);
 static lean_object* l_Lean_IR_EmitC_emitMainFn___lambda__3___closed__2;
 LEAN_EXPORT lean_object* l_Lean_IR_EmitC_emitJmp(lean_object*, lean_object*, lean_object*, lean_object*);
 static lean_object* l_Lean_IR_EmitC_emitMainFn___lambda__1___closed__6;
@@ -358,10 +355,10 @@ static lean_object* l_Lean_IR_EmitC_emitMainFn___lambda__2___closed__1;
 LEAN_EXPORT lean_object* l_Lean_IR_EmitC_emitMainFn(lean_object*, lean_object*);
 static lean_object* l_Lean_IR_EmitC_emitMainFn___lambda__1___closed__18;
 static lean_object* l_Lean_IR_EmitC_emitMainFn___lambda__2___closed__17;
-LEAN_EXPORT lean_object* l_Nat_anyAux___at_Lean_IR_EmitC_overwriteParam___spec__3___boxed(lean_object*, lean_object*, lean_object*, lean_object*, lean_object*);
 static lean_object* l_Lean_IR_EmitC_emitMainFn___lambda__1___closed__14;
 LEAN_EXPORT lean_object* l_Array_foldlMUnsafe_fold___at_Lean_IR_EmitC_emitFileHeader___spec__1(lean_object*, size_t, size_t, lean_object*, lean_object*, lean_object*);
 static lean_object* l_Lean_IR_EmitC_emitDeclAux___lambda__3___closed__2;
+LEAN_EXPORT lean_object* l_Nat_anyTR_loop___at_Lean_IR_EmitC_overwriteParam___spec__1___boxed(lean_object*, lean_object*, lean_object*, lean_object*, lean_object*);
 static lean_object* l_Lean_IR_EmitC_quoteString___lambda__1___closed__5;
 static lean_object* l_Lean_IR_EmitC_emitFileHeader___closed__14;
 static lean_object* l_Lean_IR_EmitC_emitFileHeader___closed__7;
@@ -379,7 +376,6 @@ lean_object* l_Lean_IR_ensureHasDefault(lean_object*);
 LEAN_EXPORT lean_object* l_Nat_forM_loop___at_Lean_IR_EmitC_emitArgs___spec__1(lean_object*, lean_object*, lean_object*, lean_object*, lean_object*, lean_object*);
 static lean_object* l_Lean_IR_EmitC_emitUProj___closed__1;
 static lean_object* l_Lean_IR_EmitC_emitUnbox___closed__3;
-LEAN_EXPORT uint8_t l_Nat_anyAux___at_Lean_IR_EmitC_overwriteParam___spec__3(lean_object*, lean_object*, lean_object*, lean_object*, lean_object*);
 static lean_object* l_Lean_IR_EmitC_emitBoxFn___closed__3;
 LEAN_EXPORT lean_object* l_Lean_IR_EmitC_emitNumLit(lean_object*, lean_object*, lean_object*, lean_object*);
 LEAN_EXPORT lean_object* l_Lean_IR_EmitC_emitExternCall(lean_object*, lean_object*, lean_object*, lean_object*, lean_object*, lean_object*);
@@ -525,10 +521,12 @@ static lean_object* l_Lean_IR_EmitC_emitDec___closed__1;
 extern lean_object* l_Lean_IR_instInhabitedArg;
 lean_object* l_Lean_IR_mkVarJPMaps(lean_object*);
 static lean_object* l_Lean_IR_EmitC_emitMainFn___lambda__2___closed__5;
+LEAN_EXPORT uint8_t l_Nat_anyTR_loop___at_Lean_IR_EmitC_overwriteParam___spec__2(lean_object*, lean_object*, lean_object*, lean_object*);
 static lean_object* l_Lean_IR_EmitC_emitPartialApp___closed__2;
 LEAN_EXPORT lean_object* l_Lean_IR_EmitC_emitFns(lean_object*, lean_object*);
 static lean_object* l_Nat_forM_loop___at_Lean_IR_EmitC_emitDeclAux___spec__1___closed__3;
 static lean_object* l_Lean_IR_EmitC_emitMainFn___lambda__2___closed__24;
+LEAN_EXPORT lean_object* l_Nat_anyTR_loop___at_Lean_IR_EmitC_overwriteParam___spec__3___boxed(lean_object*, lean_object*, lean_object*, lean_object*, lean_object*);
 LEAN_EXPORT lean_object* l_panic___at_Lean_IR_EmitC_emitJmp___spec__1(lean_object*);
 lean_object* l_Lean_Expr_getForallBody(lean_object*);
 lean_object* l_Lean_IR_Decl_normalizeIds(lean_object*);
@@ -558,6 +556,7 @@ LEAN_EXPORT lean_object* l_Std_RBNode_revFold___at_Lean_IR_EmitC_emitFnDecls___s
 LEAN_EXPORT lean_object* l_Lean_IR_EmitC_emitOffset(lean_object*, lean_object*, lean_object*, lean_object*);
 LEAN_EXPORT lean_object* l_Array_foldlMUnsafe_fold___at_Lean_IR_EmitC_emitInitFn___spec__3(lean_object*, size_t, size_t, lean_object*, lean_object*, lean_object*);
 static lean_object* l_Lean_IR_EmitC_emitSSet___closed__4;
+lean_object* l_panic___at_Lean_Name_getString_x21___spec__1(lean_object*);
 LEAN_EXPORT lean_object* l_Nat_forM_loop___at_Lean_IR_EmitC_emitTailCall___spec__2___boxed(lean_object*, lean_object*, lean_object*, lean_object*, lean_object*, lean_object*, lean_object*);
 static lean_object* l_Lean_IR_EmitC_emitInitFn___closed__2;
 LEAN_EXPORT lean_object* l_List_forM___at_Lean_IR_EmitC_emitMainFn___spec__3(lean_object*, lean_object*, lean_object*);
@@ -597,6 +596,7 @@ static lean_object* l_Lean_IR_EmitC_emitSSet___closed__2;
 static lean_object* l_Lean_IR_EmitC_emitMainFn___lambda__2___closed__28;
 LEAN_EXPORT lean_object* l_Lean_IR_EmitC_quoteString(lean_object*);
 static lean_object* l_Lean_IR_EmitC_emitMainFn___lambda__2___closed__14;
+LEAN_EXPORT uint8_t l_Nat_anyTR_loop___at_Lean_IR_EmitC_overwriteParam___spec__1(lean_object*, lean_object*, lean_object*, lean_object*, lean_object*);
 LEAN_EXPORT lean_object* l_Lean_IR_EmitC_emitDeclAux___lambda__1(lean_object*, lean_object*, lean_object*, lean_object*, lean_object*, lean_object*);
 static lean_object* l_Nat_forM_loop___at_Lean_IR_EmitC_emitDeclAux___spec__1___closed__2;
 LEAN_EXPORT lean_object* l_Nat_forM_loop___at_Lean_IR_EmitC_emitDeclAux___spec__1___boxed(lean_object*, lean_object*, lean_object*, lean_object*, lean_object*, lean_object*);
@@ -1180,14 +1180,14 @@ case 9:
 {
 lean_object* x_8; lean_object* x_9; 
 x_8 = l_Lean_IR_EmitC_toCType___closed__11;
-x_9 = l_panic___at_Lean_TSyntax_getString___spec__1(x_8);
+x_9 = l_panic___at_Lean_Name_getString_x21___spec__1(x_8);
 return x_9;
 }
 case 10:
 {
 lean_object* x_10; lean_object* x_11; 
 x_10 = l_Lean_IR_EmitC_toCType___closed__12;
-x_11 = l_panic___at_Lean_TSyntax_getString___spec__1(x_10);
+x_11 = l_panic___at_Lean_Name_getString_x21___spec__1(x_10);
 return x_11;
 }
 default: 
@@ -1782,7 +1782,7 @@ _start:
 lean_object* x_1; lean_object* x_2; lean_object* x_3; lean_object* x_4; lean_object* x_5; lean_object* x_6; 
 x_1 = l_Nat_forM_loop___at_Lean_IR_EmitC_emitFnDeclAux___spec__1___lambda__1___closed__1;
 x_2 = l_Nat_forM_loop___at_Lean_IR_EmitC_emitFnDeclAux___spec__1___lambda__1___closed__2;
-x_3 = lean_unsigned_to_nat(70u);
+x_3 = lean_unsigned_to_nat(77u);
 x_4 = lean_unsigned_to_nat(36u);
 x_5 = l_Nat_forM_loop___at_Lean_IR_EmitC_emitFnDeclAux___spec__1___lambda__1___closed__3;
 x_6 = l___private_Init_Util_0__mkPanicMessageWithDecl(x_1, x_2, x_3, x_4, x_5);
@@ -9643,7 +9643,7 @@ x_4 = lean_box(x_3);
 return x_4;
 }
 }
-LEAN_EXPORT uint8_t l_Nat_anyAux___at_Lean_IR_EmitC_overwriteParam___spec__1(lean_object* x_1, lean_object* x_2, lean_object* x_3, lean_object* x_4, lean_object* x_5) {
+LEAN_EXPORT uint8_t l_Nat_anyTR_loop___at_Lean_IR_EmitC_overwriteParam___spec__1(lean_object* x_1, lean_object* x_2, lean_object* x_3, lean_object* x_4, lean_object* x_5) {
 _start:
 {
 lean_object* x_6; uint8_t x_7; 
@@ -9715,7 +9715,7 @@ return x_22;
 }
 }
 }
-LEAN_EXPORT uint8_t l_Nat_anyAux___at_Lean_IR_EmitC_overwriteParam___spec__2(lean_object* x_1, lean_object* x_2, lean_object* x_3, lean_object* x_4) {
+LEAN_EXPORT uint8_t l_Nat_anyTR_loop___at_Lean_IR_EmitC_overwriteParam___spec__2(lean_object* x_1, lean_object* x_2, lean_object* x_3, lean_object* x_4) {
 _start:
 {
 lean_object* x_5; uint8_t x_6; 
@@ -9784,7 +9784,7 @@ return x_22;
 }
 }
 }
-LEAN_EXPORT uint8_t l_Nat_anyAux___at_Lean_IR_EmitC_overwriteParam___spec__3(lean_object* x_1, lean_object* x_2, lean_object* x_3, lean_object* x_4, lean_object* x_5) {
+LEAN_EXPORT uint8_t l_Nat_anyTR_loop___at_Lean_IR_EmitC_overwriteParam___spec__3(lean_object* x_1, lean_object* x_2, lean_object* x_3, lean_object* x_4, lean_object* x_5) {
 _start:
 {
 lean_object* x_6; uint8_t x_7; 
@@ -9809,7 +9809,7 @@ lean_object* x_15; lean_object* x_16; uint8_t x_17;
 lean_dec(x_11);
 x_15 = l_Nat_forM_loop___at_Lean_IR_EmitC_emitFnDeclAux___spec__1___lambda__1___closed__4;
 x_16 = l_panic___at_Lean_IR_addParamsRename___spec__1(x_15);
-x_17 = l_Nat_anyAux___at_Lean_IR_EmitC_overwriteParam___spec__1(x_2, x_15, x_16, x_3, x_14);
+x_17 = l_Nat_anyTR_loop___at_Lean_IR_EmitC_overwriteParam___spec__1(x_2, x_15, x_16, x_3, x_14);
 lean_dec(x_16);
 if (x_17 == 0)
 {
@@ -9829,7 +9829,7 @@ else
 lean_object* x_20; uint8_t x_21; 
 x_20 = lean_array_fget(x_1, x_11);
 lean_dec(x_11);
-x_21 = l_Nat_anyAux___at_Lean_IR_EmitC_overwriteParam___spec__2(x_2, x_20, x_3, x_14);
+x_21 = l_Nat_anyTR_loop___at_Lean_IR_EmitC_overwriteParam___spec__2(x_2, x_20, x_3, x_14);
 lean_dec(x_20);
 if (x_21 == 0)
 {
@@ -9860,16 +9860,16 @@ _start:
 lean_object* x_3; uint8_t x_4; 
 x_3 = lean_array_get_size(x_1);
 lean_inc(x_3);
-x_4 = l_Nat_anyAux___at_Lean_IR_EmitC_overwriteParam___spec__3(x_1, x_2, x_3, x_3, x_3);
+x_4 = l_Nat_anyTR_loop___at_Lean_IR_EmitC_overwriteParam___spec__3(x_1, x_2, x_3, x_3, x_3);
 lean_dec(x_3);
 return x_4;
 }
 }
-LEAN_EXPORT lean_object* l_Nat_anyAux___at_Lean_IR_EmitC_overwriteParam___spec__1___boxed(lean_object* x_1, lean_object* x_2, lean_object* x_3, lean_object* x_4, lean_object* x_5) {
+LEAN_EXPORT lean_object* l_Nat_anyTR_loop___at_Lean_IR_EmitC_overwriteParam___spec__1___boxed(lean_object* x_1, lean_object* x_2, lean_object* x_3, lean_object* x_4, lean_object* x_5) {
 _start:
 {
 uint8_t x_6; lean_object* x_7; 
-x_6 = l_Nat_anyAux___at_Lean_IR_EmitC_overwriteParam___spec__1(x_1, x_2, x_3, x_4, x_5);
+x_6 = l_Nat_anyTR_loop___at_Lean_IR_EmitC_overwriteParam___spec__1(x_1, x_2, x_3, x_4, x_5);
 lean_dec(x_4);
 lean_dec(x_3);
 lean_dec(x_1);
@@ -9877,11 +9877,11 @@ x_7 = lean_box(x_6);
 return x_7;
 }
 }
-LEAN_EXPORT lean_object* l_Nat_anyAux___at_Lean_IR_EmitC_overwriteParam___spec__2___boxed(lean_object* x_1, lean_object* x_2, lean_object* x_3, lean_object* x_4) {
+LEAN_EXPORT lean_object* l_Nat_anyTR_loop___at_Lean_IR_EmitC_overwriteParam___spec__2___boxed(lean_object* x_1, lean_object* x_2, lean_object* x_3, lean_object* x_4) {
 _start:
 {
 uint8_t x_5; lean_object* x_6; 
-x_5 = l_Nat_anyAux___at_Lean_IR_EmitC_overwriteParam___spec__2(x_1, x_2, x_3, x_4);
+x_5 = l_Nat_anyTR_loop___at_Lean_IR_EmitC_overwriteParam___spec__2(x_1, x_2, x_3, x_4);
 lean_dec(x_3);
 lean_dec(x_2);
 lean_dec(x_1);
@@ -9889,11 +9889,11 @@ x_6 = lean_box(x_5);
 return x_6;
 }
 }
-LEAN_EXPORT lean_object* l_Nat_anyAux___at_Lean_IR_EmitC_overwriteParam___spec__3___boxed(lean_object* x_1, lean_object* x_2, lean_object* x_3, lean_object* x_4, lean_object* x_5) {
+LEAN_EXPORT lean_object* l_Nat_anyTR_loop___at_Lean_IR_EmitC_overwriteParam___spec__3___boxed(lean_object* x_1, lean_object* x_2, lean_object* x_3, lean_object* x_4, lean_object* x_5) {
 _start:
 {
 uint8_t x_6; lean_object* x_7; 
-x_6 = l_Nat_anyAux___at_Lean_IR_EmitC_overwriteParam___spec__3(x_1, x_2, x_3, x_4, x_5);
+x_6 = l_Nat_anyTR_loop___at_Lean_IR_EmitC_overwriteParam___spec__3(x_1, x_2, x_3, x_4, x_5);
 lean_dec(x_4);
 lean_dec(x_3);
 lean_dec(x_2);

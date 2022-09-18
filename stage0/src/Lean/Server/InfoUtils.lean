@@ -4,28 +4,12 @@ Released under Apache 2.0 license as described in the file LICENSE.
 
 Authors: Wojciech Nawrocki
 -/
-import Lean.DocString
-import Lean.Elab.InfoTree
 import Lean.PrettyPrinter
-import Lean.Util.Sorry
-
-protected structure String.Range where
-  start : String.Pos
-  stop  : String.Pos
-  deriving Inhabited, Repr, BEq, Hashable
-
-def String.Range.contains (r : String.Range) (pos : String.Pos) (includeStop := false) : Bool :=
-  r.start <= pos && (if includeStop then pos <= r.stop else pos < r.stop)
-
-def Lean.Syntax.getRange? (stx : Syntax) (originalOnly := false) : Option String.Range :=
-  match stx.getPos? originalOnly, stx.getTailPos? originalOnly with
-  | some start, some stop => some { start, stop }
-  | _,          _         => none
 
 namespace Lean.Elab
 
 /-- Visit nodes, passing in a surrounding context (the innermost one) and accumulating results on the way back up. -/
-partial def InfoTree.visitM [Monad m] [Inhabited α]
+partial def InfoTree.visitM [Monad m]
     (preNode  : ContextInfo → Info → (children : Std.PersistentArray InfoTree) → m Unit := fun _ _ _ => pure ())
     (postNode : ContextInfo → Info → (children : Std.PersistentArray InfoTree) → List (Option α) → m α)
     : InfoTree → m (Option α) :=
@@ -38,6 +22,12 @@ where go
     postNode ctx i cs as
   | none, node .. => panic! "unexpected context-free info tree node"
   | _, hole .. => pure none
+
+/-- `InfoTree.visitM` specialized to `Unit` return type -/
+def InfoTree.visitM' [Monad m]
+    (preNode  : ContextInfo → Info → (children : Std.PersistentArray InfoTree) → m Unit := fun _ _ _ => pure ())
+    (postNode : ContextInfo → Info → (children : Std.PersistentArray InfoTree) → m Unit := fun _ _ _ => pure ())
+    (t : InfoTree) : m Unit := t.visitM preNode (fun ci i cs _ => postNode ci i cs) |> discard
 
 /--
   Visit nodes bottom-up, passing in a surrounding context (the innermost one) and the union of nested results (empty at leaves). -/
@@ -91,6 +81,8 @@ def Info.stx : Info → Syntax
   | ofCompletionInfo i     => i.stx
   | ofCustomInfo i         => i.stx
   | ofUserWidgetInfo i     => i.stx
+  | ofFVarAliasInfo _      => .missing
+  | ofFieldRedeclInfo i    => i.stx
 
 def Info.lctx : Info → LocalContext
   | Info.ofTermInfo i  => i.lctx
@@ -143,21 +135,28 @@ def InfoTree.smallestInfo? (p : Info → Bool) (t : InfoTree) : Option (ContextI
 
 /-- Find an info node, if any, which should be shown on hover/cursor at position `hoverPos`. -/
 partial def InfoTree.hoverableInfoAt? (t : InfoTree) (hoverPos : String.Pos) (includeStop := false) (omitAppFns := false) : Option (ContextInfo × Info) := Id.run do
-  let results := t.visitM (m := Id) (postNode := fun ctx i _ results => do
+  let results := t.visitM (m := Id) (postNode := fun ctx info _ results => do
     let mut results := results.bind (·.getD [])
-    if omitAppFns && i.stx.isOfKind ``Parser.Term.app && i.stx[0].isIdent then
-      results := results.filter (·.2.2.stx != i.stx[0])
-    if results.isEmpty && (i matches Info.ofFieldInfo _ || i.toElabInfo?.isSome) && i.contains hoverPos includeStop then
-      let r := i.range?.get!
-      let priority :=
-        if r.stop == hoverPos then
-          0  -- prefer results directly *after* the hover position (only matters for `includeStop = true`; see #767)
-        else if i matches .ofTermInfo { expr := .fvar .., .. } then
-          0  -- prefer results for constants over variables (which overlap at declaration names)
-        else 1
-      [(priority, ctx, i)]
-    else
-      results) |>.getD []
+    if omitAppFns && info.stx.isOfKind ``Parser.Term.app && info.stx[0].isIdent then
+      results := results.filter (·.2.2.stx != info.stx[0])
+    unless results.isEmpty do
+      return results  -- prefer innermost results
+    /-
+      Remark: we skip `info` nodes associated with the `nullKind` and `withAnnotateState` because they are used by tactics (e.g., `rewrite`) to control
+      which goal is displayed in the info views. See issue #1403
+    -/
+    if info.stx.isOfKind nullKind || info.toElabInfo?.any (·.elaborator == `Lean.Elab.Tactic.evalWithAnnotateState) then
+      return results
+    unless (info matches Info.ofFieldInfo _ || info.toElabInfo?.isSome) && info.contains hoverPos includeStop do
+      return results
+    let r := info.range?.get!
+    let priority :=
+      if r.stop == hoverPos then
+        0  -- prefer results directly *after* the hover position (only matters for `includeStop = true`; see #767)
+      else if info matches .ofTermInfo { expr := .fvar .., .. } then
+        0  -- prefer results for constants over variables (which overlap at declaration names)
+      else 1
+    [(priority, ctx, info)]) |>.getD []
   let maxPrio? := results.map (·.1) |>.maximum?
   let res? := results.find? (·.1 == maxPrio?) |>.map (·.2)
   if let some (_, i) := res? then
@@ -180,7 +179,7 @@ def Info.docString? (i : Info) : MetaM (Option String) := do
   if let Info.ofFieldInfo fi := i then
     return ← findDocString? env fi.projName
   if let some ei := i.toElabInfo? then
-    return ← findDocString? env ei.elaborator <||> findDocString? env ei.stx.getKind
+    return ← findDocString? env ei.stx.getKind <||> findDocString? env ei.elaborator
   return none
 
 /-- Construct a hover popup, if any, from an info node in a context.-/
@@ -217,7 +216,12 @@ where
       else
         let eFmt ← Meta.ppExpr e
         -- Try not to show too scary internals
-        let fmt := if isAtomicFormat eFmt then f!"{eFmt} : {tpFmt}" else f!"{tpFmt}"
+        let showTerm := if let .fvar _ := e then
+          if let some ldecl := (← getLCtx).findFVar? e then
+            !ldecl.userName.hasMacroScopes
+          else false
+        else isAtomicFormat eFmt
+        let fmt := if showTerm then f!"{eFmt} : {tpFmt}" else tpFmt
         return some f!"```lean
 {fmt}
 ```"

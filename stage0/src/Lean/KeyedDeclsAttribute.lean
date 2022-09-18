@@ -3,9 +3,7 @@ Copyright (c) 2020 Microsoft Corporation. All rights reserved.
 Released under Apache 2.0 license as described in the file LICENSE.
 Authors: Leonardo de Moura, Sebastian Ullrich
 -/
-import Lean.Attributes
 import Lean.Compiler.InitAttr
-import Lean.ToExpr
 import Lean.ScopedEnvExtension
 import Lean.Compiler.IR.CompilerM
 
@@ -117,6 +115,7 @@ protected unsafe def init {γ} (df : Def γ) (attrDeclName : Name) : IO (KeyedDe
   }
   unless df.builtinName.isAnonymous do
     registerBuiltinAttribute {
+      ref   := attrDeclName
       name  := df.builtinName
       descr := "(builtin) " ++ df.descr
       add   := fun declName stx kind => do
@@ -135,6 +134,7 @@ protected unsafe def init {γ} (df : Def γ) (attrDeclName : Name) : IO (KeyedDe
       applicationTime := AttributeApplicationTime.afterCompilation
     }
   registerBuiltinAttribute {
+    ref             := attrDeclName
     name            := df.name
     descr           := df.descr
     erase           := fun declName => do

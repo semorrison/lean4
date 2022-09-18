@@ -1,4 +1,4 @@
-import Std
+import Lean.Data.PersistentArray
 
 def check (x : IO Nat) (expected : IO Nat) : IO Unit := do
 unless (← x) == (← expected) do

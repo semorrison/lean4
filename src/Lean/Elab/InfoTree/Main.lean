@@ -4,12 +4,7 @@ Released under Apache 2.0 license as described in the file LICENSE.
 
 Authors: Wojciech Nawrocki, Leonardo de Moura, Sebastian Ullrich
 -/
-import Lean.Data.Position
-import Lean.Message
-import Lean.Data.Json
-import Lean.Meta.Basic
 import Lean.Meta.PPGoal
-import Lean.Elab.InfoTree.Types
 
 namespace Lean.Elab
 
@@ -38,6 +33,8 @@ end ContextInfo
 def CompletionInfo.stx : CompletionInfo → Syntax
   | dot i .. => i.stx
   | id stx .. => stx
+  | dotId stx .. => stx
+  | fieldId stx .. => stx
   | namespaceId stx => stx
   | option stx => stx
   | endSection stx .. => stx
@@ -147,6 +144,12 @@ def MacroExpansionInfo.format (ctx : ContextInfo) (info : MacroExpansionInfo) : 
 def UserWidgetInfo.format (info : UserWidgetInfo) : Format :=
   f!"UserWidget {info.widgetId}\n{Std.ToFormat.format info.props}"
 
+def FVarAliasInfo.format (info : FVarAliasInfo) : Format :=
+  f!"FVarAlias {info.id.name} -> {info.baseId.name}"
+
+def FieldRedeclInfo.format (ctx : ContextInfo) (info : FieldRedeclInfo) : Format :=
+  f!"FieldRedecl @ {formatStxRange ctx info.stx}"
+
 def Info.format (ctx : ContextInfo) : Info → IO Format
   | ofTacticInfo i         => i.format ctx
   | ofTermInfo i           => i.format ctx
@@ -154,8 +157,10 @@ def Info.format (ctx : ContextInfo) : Info → IO Format
   | ofMacroExpansionInfo i => i.format ctx
   | ofFieldInfo i          => i.format ctx
   | ofCompletionInfo i     => i.format ctx
-  | ofUserWidgetInfo i     => pure <| UserWidgetInfo.format i
+  | ofUserWidgetInfo i     => pure <| i.format
   | ofCustomInfo i         => pure <| Std.ToFormat.format i
+  | ofFVarAliasInfo i      => pure <| i.format
+  | ofFieldRedeclInfo i    => pure <| i.format ctx
 
 def Info.toElabInfo? : Info → Option ElabInfo
   | ofTacticInfo i         => some i.toElabInfo
@@ -166,6 +171,8 @@ def Info.toElabInfo? : Info → Option ElabInfo
   | ofCompletionInfo _     => none
   | ofUserWidgetInfo _     => none
   | ofCustomInfo _         => none
+  | ofFVarAliasInfo _      => none
+  | ofFieldRedeclInfo _    => none
 
 /--
   Helper function for propagating the tactic metavariable context to its children nodes.
@@ -222,23 +229,44 @@ def pushInfoLeaf (t : Info) : m Unit := do
 def addCompletionInfo (info : CompletionInfo) : m Unit := do
   pushInfoLeaf <| Info.ofCompletionInfo info
 
-/-- This does the same job as resolveGlobalConstNoOverload; resolving an identifier
+def addConstInfo [MonadEnv m] [MonadError m]
+    (stx : Syntax) (n : Name) (expectedType? : Option Expr := none) : m Unit := do
+  pushInfoLeaf <| .ofTermInfo {
+    elaborator := .anonymous
+    lctx := .empty
+    expr := (← mkConstWithLevelParams n)
+    stx
+    expectedType?
+  }
+
+/-- This does the same job as `resolveGlobalConstNoOverload`; resolving an identifier
 syntax to a unique fully resolved name or throwing if there are ambiguities.
 But also adds this resolved name to the infotree. This means that when you hover
 over a name in the sourcefile you will see the fully resolved name in the hover info.-/
-def resolveGlobalConstNoOverloadWithInfo [MonadResolveName m] [MonadEnv m] [MonadError m] (id : Syntax) (expectedType? : Option Expr := none) : m Name := do
+def resolveGlobalConstNoOverloadWithInfo [MonadResolveName m] [MonadEnv m] [MonadError m]
+    (id : Syntax) (expectedType? : Option Expr := none) : m Name := do
   let n ← resolveGlobalConstNoOverload id
   if (← getInfoState).enabled then
     -- we do not store a specific elaborator since identifiers are special-cased by the server anyway
-    pushInfoLeaf <| Info.ofTermInfo { elaborator := Name.anonymous, lctx := LocalContext.empty, expr := (← mkConstWithLevelParams n), stx := id, expectedType? }
+    addConstInfo id n expectedType?
   return n
 
-/-- Similar to resolveGlobalConstNoOverloadWithInfo, except if there are multiple name resolutions then it returns them as a list. -/
-def resolveGlobalConstWithInfos [MonadResolveName m] [MonadEnv m] [MonadError m] (id : Syntax) (expectedType? : Option Expr := none) : m (List Name) := do
+/-- Similar to `resolveGlobalConstNoOverloadWithInfo`, except if there are multiple name resolutions then it returns them as a list. -/
+def resolveGlobalConstWithInfos [MonadResolveName m] [MonadEnv m] [MonadError m]
+    (id : Syntax) (expectedType? : Option Expr := none) : m (List Name) := do
   let ns ← resolveGlobalConst id
   if (← getInfoState).enabled then
     for n in ns do
-      pushInfoLeaf <| Info.ofTermInfo { elaborator := Name.anonymous, lctx := LocalContext.empty, expr := (← mkConstWithLevelParams n), stx := id, expectedType? }
+      addConstInfo id n expectedType?
+  return ns
+
+/-- Similar to `resolveGlobalName`, but it also adds the resolved name to the info tree. -/
+def resolveGlobalNameWithInfos [MonadResolveName m] [MonadEnv m] [MonadError m]
+    (ref : Syntax) (id : Name) : m (List (Name × List String)) := do
+  let ns ← resolveGlobalName id
+  if (← getInfoState).enabled then
+    for (n, _) in ns do
+      addConstInfo ref n
   return ns
 
 /-- Use this to descend a node on the infotree that is being built.
@@ -257,8 +285,8 @@ def withInfoContext' [MonadFinally m] (x : m α) (mkInfo : α → m (Sum Info MV
         let info ← mkInfo a
         modifyInfoTrees fun trees =>
           match info with
-          | Sum.inl info  => treesSaved.push <| InfoTree.node info trees
-          | Sum.inr mvaId => treesSaved.push <| InfoTree.hole mvaId
+          | Sum.inl info   => treesSaved.push <| InfoTree.node info trees
+          | Sum.inr mvarId => treesSaved.push <| InfoTree.hole mvarId
   else
     x
 

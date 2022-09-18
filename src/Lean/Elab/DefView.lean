@@ -3,35 +3,29 @@ Copyright (c) 2020 Microsoft Corporation. All rights reserved.
 Released under Apache 2.0 license as described in the file LICENSE.
 Authors: Leonardo de Moura, Sebastian Ullrich
 -/
-import Std.ShareCommon
-import Lean.Parser.Command
-import Lean.Util.CollectLevelParams
-import Lean.Util.FoldConsts
 import Lean.Meta.ForEachExpr
-import Lean.Meta.CollectFVars
 import Lean.Elab.Command
-import Lean.Elab.SyntheticMVars
-import Lean.Elab.Binders
 import Lean.Elab.DeclUtil
+
 namespace Lean.Elab
 
 inductive DefKind where
-  | «def» | «theorem» | «example» | «opaque» | «abbrev»
+  | def | theorem | example | opaque | abbrev
   deriving Inhabited, BEq
 
 def DefKind.isTheorem : DefKind → Bool
-  | «theorem» => true
-  | _         => false
-
-def DefKind.isDefOrAbbrevOrOpaque : DefKind → Bool
-  | «def»    => true
-  | «opaque» => true
-  | «abbrev» => true
+  | .theorem => true
   | _        => false
 
+def DefKind.isDefOrAbbrevOrOpaque : DefKind → Bool
+  | .def    => true
+  | .opaque => true
+  | .abbrev => true
+  | _       => false
+
 def DefKind.isExample : DefKind → Bool
-  | «example» => true
-  | _         => false
+  | .example => true
+  | _        => false
 
 structure DefView where
   kind          : DefKind
@@ -44,8 +38,10 @@ structure DefView where
   deriving?     : Option (Array Syntax) := none
   deriving Inhabited
 
-namespace Command
+def DefView.isInstance (view : DefView) : Bool :=
+  view.modifiers.attrs.any fun attr => attr.name == `instance
 
+namespace Command
 open Meta
 
 def mkDefViewOfAbbrev (modifiers : Modifiers) (stx : Syntax) : DefView :=
@@ -81,7 +77,7 @@ def mkFreshInstanceName : CommandElabM Name := do
 def mkInstanceName (binders : Array Syntax) (type : Syntax) : CommandElabM Name := do
   let savedState ← get
   try
-    let result ← runTermElabM `inst fun _ => Term.withAutoBoundImplicit <| Term.elabBinders binders fun _ => Term.withoutErrToSorry do
+    let result ← runTermElabM fun _ => Term.withAutoBoundImplicit <| Term.elabBinders binders fun _ => Term.withoutErrToSorry do
       let type ← instantiateMVars (← Term.elabType type)
       let ref ← IO.mkRef ""
       Meta.forEachExpr type fun e => do
@@ -136,11 +132,11 @@ def mkDefViewOfOpaque (modifiers : Modifiers) (stx : Syntax) : CommandElabM DefV
 
 def mkDefViewOfExample (modifiers : Modifiers) (stx : Syntax) : DefView :=
   -- leading_parser "example " >> declSig >> declVal
-  let (binders, type) := expandDeclSig stx[1]
+  let (binders, type) := expandOptDeclSig stx[1]
   let id              := mkIdentFrom stx `_example
   let declId          := mkNode ``Parser.Command.declId #[id, mkNullNode]
   { ref := stx, kind := DefKind.example, modifiers := modifiers,
-    declId := declId, binders := binders, type? := some type, value := stx[2] }
+    declId := declId, binders := binders, type? := type, value := stx[2] }
 
 def isDefLike (stx : Syntax) : Bool :=
   let declKind := stx.getKind

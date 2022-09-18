@@ -557,6 +557,7 @@ where
                 valStx ← `(fun $(view.binders.getArgs)* => $valStx:term)
               let fvarType ← inferType info.fvar
               let value ← Term.elabTermEnsuringType valStx fvarType
+              pushInfoLeaf <| .ofFieldRedeclInfo { stx := view.ref }
               let infos := updateFieldInfoVal infos info.name value
               go (i+1) defaultValsOverridden infos
         match info.kind with
@@ -594,27 +595,24 @@ private def withUsed {α} (scopeVars : Array Expr) (params : Array Expr) (fieldI
   let (lctx, localInsts, vars) ← removeUnused scopeVars params fieldInfos
   withLCtx lctx localInsts <| k vars
 
-private def levelMVarToParam (scopeVars : Array Expr) (params : Array Expr) (fieldInfos : Array StructFieldInfo) (univToInfer? : Option LMVarId) : TermElabM (Array StructFieldInfo) :=
-  go |>.run' 1
+private def levelMVarToParam (scopeVars : Array Expr) (params : Array Expr) (fieldInfos : Array StructFieldInfo) (univToInfer? : Option LMVarId) : TermElabM (Array StructFieldInfo) := do
+  levelMVarToParamFVars scopeVars
+  levelMVarToParamFVars params
+  fieldInfos.mapM fun info => do
+    levelMVarToParamFVar info.fvar
+    match info.value? with
+    | none       => pure info
+    | some value =>
+      let value ← levelMVarToParam' value
+      pure { info with value? := value }
 where
-  levelMVarToParam' (type : Expr) : StateRefT Nat TermElabM Expr := do
-    Term.levelMVarToParam' type (except := fun mvarId => univToInfer? == some mvarId)
+  levelMVarToParam' (type : Expr) : TermElabM Expr := do
+    Term.levelMVarToParam type (except := fun mvarId => univToInfer? == some mvarId)
 
-  go : StateRefT Nat TermElabM (Array StructFieldInfo) := do
-    levelMVarToParamFVars scopeVars
-    levelMVarToParamFVars params
-    fieldInfos.mapM fun info => do
-      levelMVarToParamFVar info.fvar
-      match info.value? with
-      | none       => pure info
-      | some value =>
-        let value ← levelMVarToParam' value
-        pure { info with value? := value }
-
-  levelMVarToParamFVars (fvars : Array Expr) : StateRefT Nat TermElabM Unit :=
+  levelMVarToParamFVars (fvars : Array Expr) : TermElabM Unit :=
     fvars.forM levelMVarToParamFVar
 
-  levelMVarToParamFVar (fvar : Expr) : StateRefT Nat TermElabM Unit := do
+  levelMVarToParamFVar (fvar : Expr) : TermElabM Unit := do
     let type ← inferType fvar
     discard <| levelMVarToParam' type
 
@@ -876,7 +874,7 @@ def elabStructure (modifiers : Modifiers) (stx : Syntax) : CommandElabM Unit := 
   let derivingClassViews ← getOptDerivingClasses stx[6]
   let type ← if optType.isNone then `(Sort _) else pure optType[0][1]
   let declName ←
-    runTermElabM none fun scopeVars => do
+    runTermElabM fun scopeVars => do
       let scopeLevelNames ← Term.getLevelNames
       let ⟨name, declName, allUserLevelNames⟩ ← Elab.expandDeclId (← getCurrNamespace) scopeLevelNames declId modifiers
       Term.withAutoBoundImplicitForbiddenPred (fun n => name == n) do
@@ -908,7 +906,7 @@ def elabStructure (modifiers : Modifiers) (stx : Syntax) : CommandElabM Unit := 
                 mkInjectiveTheorems declName
               return declName
   derivingClassViews.forM fun view => view.applyHandlers #[declName]
-  runTermElabM declName fun _ =>
+  runTermElabM fun _ => Term.withDeclName declName do
     Term.applyAttributesAt declName modifiers.attrs .afterCompilation
 
 builtin_initialize registerTraceClass `Elab.structure

@@ -72,7 +72,9 @@ def sepByIndent.formatter (p : Formatter) (_sep : String) (pSep : Formatter) : F
   let hasNewlineSep := stx.getArgs.mapIdx (fun ⟨i, _⟩ n => i % 2 == 1 && n.matchesNull 0) |>.any id
   visitArgs do
     for i in (List.range stx.getArgs.size).reverse do
-      if i % 2 == 0 then p else pSep <|> (pushWhitespace "\n" *> goLeft)
+      if i % 2 == 0 then p else pSep <|>
+        -- If the final separator is a newline, skip it.
+        ((if i == stx.getArgs.size - 1 then pure () else pushWhitespace "\n") *> goLeft)
   -- If there is any newline separator, then we need to force a newline at the
   -- start so that `withPosition` will pick up the right column.
   if hasNewlineSep then
@@ -175,7 +177,7 @@ macro_rules
     let [(fullDeclName, [])] ← Macro.resolveGlobalName declName.getId |
       Macro.throwError "expected non-overloaded constant name"
     let aliasName := aliasName?.getD (Syntax.mkStrLit declName.getId.toString)
-    `(do Parser.registerAlias $aliasName $declName $(info?.getD (Unhygienic.run `({}))) (kind? := some $(kind?.getD (quote fullDeclName)))
+    `(do Parser.registerAlias $aliasName ``$declName $declName $(info?.getD (Unhygienic.run `({}))) (kind? := some $(kind?.getD (quote fullDeclName)))
          PrettyPrinter.Formatter.registerAlias $aliasName $(mkIdentFrom declName (declName.getId ++ `formatter))
          PrettyPrinter.Parenthesizer.registerAlias $aliasName $(mkIdentFrom declName (declName.getId ++ `parenthesizer)))
 

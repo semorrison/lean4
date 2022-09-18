@@ -5,20 +5,18 @@ import Lean.Server.InfoUtils
 namespace Lean.Linter
 
 register_builtin_option linter.all : Bool := {
-  defValue := true,
+  defValue := false
   descr := "enable all linters"
 }
 
-def getLinterAll (o : Options) : Bool := o.get linter.all.name linter.all.defValue
+def getLinterAll (o : Options) (defValue := linter.all.defValue) : Bool := o.get linter.all.name defValue
+
+def getLinterValue (opt : Lean.Option Bool) (o : Options) : Bool := o.get opt.name (getLinterAll o opt.defValue)
 
 open Lean.Elab Lean.Elab.Command
 
-def publishMessage
-  (content : String) (range : String.Range) (severity : MessageSeverity := .warning) : CommandElabM Unit :=
-do
-  let ctx := (← read)
-  let messages := (← get).messages |>.add (mkMessageCore ctx.fileName ctx.fileMap content severity range.start range.stop)
-  modify ({ · with messages := messages })
+def logLint (linterOption : Lean.Option Bool) (stx : Syntax) (msg : MessageData) : CommandElabM Unit :=
+  logWarningAt stx (.tagged linterOption.name m!"{msg} [{linterOption.name}]")
 
 /-- Go upwards through the given `tree` starting from the smallest node that
 contains the given `range` and collect all `MacroExpansionInfo`s on the way up.
@@ -50,41 +48,6 @@ where
     else
       return none)
 
-/-- List of `Syntax` nodes in which each succeeding element is the parent of
-the current. The associated index is the index of the preceding element in the
-list of children of the current element. -/
-abbrev SyntaxStack := List (Syntax × Nat)
-
-/-- Go upwards through the given `root` syntax starting from `child` and
-collect all `Syntax` nodes on the way up.
-
-Return `none` if the `child` is not found in `root`. -/
-partial def findSyntaxStack? (root child : Syntax) : Option SyntaxStack := Id.run <| do
-  let some childRange := child.getRange?
-    | none
-  let rec go (stack : SyntaxStack) (stx : Syntax) : Option SyntaxStack := Id.run <| do
-    let some range := stx.getRange?
-      | none
-    if !range.contains childRange.start then
-      return none
-
-    if range == childRange && stx.getKind == child.getKind then
-      return stack
-
-    for i in List.range stx.getNumArgs do
-      if let some resultStack := go ((stx, i) :: stack) stx[i] then
-        return resultStack
-    return none
-  go [] root
-
-/-- Compare the `SyntaxNodeKind`s in `pattern` to those of the `Syntax`
-elements in `stack`. Return `false` if `stack` is shorter than `pattern`. -/
-def stackMatches (stack : SyntaxStack) (pattern : List $ Option SyntaxNodeKind) : Bool :=
-  stack.length >= pattern.length &&
-  (stack
-    |>.zipWith (fun (s, _) p => p |>.map (s.isOfKind ·) |>.getD true) pattern
-    |>.all id)
-
-abbrev IgnoreFunction := Syntax → SyntaxStack → Options → Bool
+abbrev IgnoreFunction := Syntax → Syntax.Stack → Options → Bool
 
 end Lean.Linter

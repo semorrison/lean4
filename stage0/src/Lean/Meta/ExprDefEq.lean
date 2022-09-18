@@ -3,15 +3,9 @@ Copyright (c) 2019 Microsoft Corporation. All rights reserved.
 Released under Apache 2.0 license as described in the file LICENSE.
 Authors: Leonardo de Moura
 -/
-import Lean.ProjFns
-import Lean.Structure
-import Lean.Meta.WHNF
-import Lean.Meta.InferType
-import Lean.Meta.FunInfo
-import Lean.Meta.Check
 import Lean.Meta.Offset
-import Lean.Meta.ForEachExpr
 import Lean.Meta.UnificationHint
+import Lean.Util.OccursCheck
 
 namespace Lean.Meta
 
@@ -113,9 +107,9 @@ def isDefEqNat (s t : Expr) : MetaM LBool := do
 def isDefEqStringLit (s t : Expr) : MetaM LBool := do
   let isDefEq (s t) : MetaM LBool := toLBoolM <| Meta.isExprDefEqAux s t
   if s.isStringLit && t.isAppOf ``String.mk then
-    isDefEq (toCtorIfLit s) t
+    isDefEq s.toCtorIfLit t
   else if s.isAppOf `String.mk && t.isStringLit then
-    isDefEq s (toCtorIfLit t)
+    isDefEq s t.toCtorIfLit
   else
     pure LBool.undef
 
@@ -143,39 +137,39 @@ private def trySynthPending (e : Expr) : MetaM Bool := do
   Result type for `isDefEqArgsFirstPass`.
 -/
 inductive DefEqArgsFirstPassResult where
-  | /--
-      Failed to establish that explicit arguments are def-eq.
-      Remark: higher output parameters, and parameters that depend on them
-      are postponed.
-    -/
-    failed
-  | /--
-      Succeeded. The array `postponedImplicit` contains the position
-      of the implicit arguments for which def-eq has been postponed.
-      `postponedHO` contains the higher order output parameters, and parameters
-      that depend on them. They should be processed after the implict ones.
-      `postponedHO` is used to handle applications involving functions that
-      contain higher order output parameters. Example:
-      ```lean
-      getElem :
-        {Cont : Type u_1} → {Idx : Type u_2} → {Elem : Type u_3} →
-        {Dom : Cont → Idx → Prop} → [self : GetElem Cont Idx Elem Dom] →
-        (xs : Cont) → (i : Idx) → (h : Dom xs i) → Elem
-      ```
-      The argumengs `Dom` and `h` must be processed after all implicit arguments
-      otherwise higher-order unification problems are generated. See issue #1299,
-      when trying to solve
-      ```
-      getElem ?a ?i ?h =?= getElem a i (Fin.val_lt_of_le i ...)
-      ```
-      we have to solve the constraint
-      ```
-      ?Dom a i.val =?= LT.lt i.val (Array.size a)
-      ```
-      by solving after the instance has been synthesized, we reduce this constraint to
-      a simple check.
-    -/
-    ok (postponedImplicit : Array Nat) (postponedHO : Array Nat)
+  /--
+  Failed to establish that explicit arguments are def-eq.
+  Remark: higher output parameters, and parameters that depend on them
+  are postponed.
+  -/
+  | failed
+  /--
+  Succeeded. The array `postponedImplicit` contains the position
+  of the implicit arguments for which def-eq has been postponed.
+  `postponedHO` contains the higher order output parameters, and parameters
+  that depend on them. They should be processed after the implict ones.
+  `postponedHO` is used to handle applications involving functions that
+  contain higher order output parameters. Example:
+  ```lean
+  getElem :
+    {cont : Type u_1} → {idx : Type u_2} → {elem : Type u_3} →
+    {dom : cont → idx → Prop} → [self : GetElem cont idx elem dom] →
+    (xs : cont) → (i : idx) → (h : dom xs i) → elem
+  ```
+  The argumengs `dom` and `h` must be processed after all implicit arguments
+  otherwise higher-order unification problems are generated. See issue #1299,
+  when trying to solve
+  ```
+  getElem ?a ?i ?h =?= getElem a i (Fin.val_lt_of_le i ...)
+  ```
+  we have to solve the constraint
+  ```
+  ?dom a i.val =?= LT.lt i.val (Array.size a)
+  ```
+  by solving after the instance has been synthesized, we reduce this constraint to
+  a simple check.
+  -/
+  | ok (postponedImplicit : Array Nat) (postponedHO : Array Nat)
 
 /--
   First pass for `isDefEqArgs`. We unify explicit arguments, *and* easy cases
@@ -314,20 +308,18 @@ private partial def isDefEqBindingAux (lctx : LocalContext) (fvars : Array Expr)
   isDefEqBindingAux lctx #[] a b #[]
 
 private def checkTypesAndAssign (mvar : Expr) (v : Expr) : MetaM Bool :=
-  traceCtx `Meta.isDefEq.assign.checkTypes do
+  withTraceNode `Meta.isDefEq.assign.checkTypes (return m!"{exceptBoolEmoji ·} ({mvar} : {← inferType mvar}) := ({v} : {← inferType v})") do
     if !mvar.isMVar then
-      trace[Meta.isDefEq.assign.final] "metavariable expected at {mvar} := {v}"
+      trace[Meta.isDefEq.assign.checkTypes] "metavariable expected"
       return false
     else
       -- must check whether types are definitionally equal or not, before assigning and returning true
       let mvarType ← inferType mvar
       let vType ← inferType v
       if (← withTransparency TransparencyMode.default <| Meta.isExprDefEqAux mvarType vType) then
-        trace[Meta.isDefEq.assign.final] "{mvar} := {v}"
         mvar.mvarId!.assign v
         pure true
       else
-        trace[Meta.isDefEq.assign.typeMismatch] "{mvar} : {mvarType} := {v} : {vType}"
         pure false
 
 /--
@@ -1018,8 +1010,7 @@ private partial def processConstApprox (mvar : Expr) (args : Array Expr) (patter
 /-- Tries to solve `?m a₁ ... aₙ =?= v` by assigning `?m`.
     It assumes `?m` is unassigned. -/
 private partial def processAssignment (mvarApp : Expr) (v : Expr) : MetaM Bool :=
-  traceCtx `Meta.isDefEq.assign do
-    trace[Meta.isDefEq.assign] "{mvarApp} := {v}"
+  withTraceNode `Meta.isDefEq.assign (return m!"{exceptBoolEmoji ·} {mvarApp} := {v}") do
     let mvar := mvarApp.getAppFn
     let mvarDecl ← mvar.mvarId!.getDecl
     let rec process (i : Nat) (args : Array Expr) (v : Expr) := do
@@ -1135,7 +1126,7 @@ private def tryHeuristic (t s : Expr) : MetaM Bool := do
   unless info.hints.isRegular || isMatcherCore (← getEnv) tFn.constName! do
     unless t.hasExprMVar || s.hasExprMVar do
       return false
-  traceCtx `Meta.isDefEq.delta do
+  withTraceNode `Meta.isDefEq.delta (return m!"{exceptBoolEmoji ·} {t} =?= {s}") do
     /-
       We process arguments before universe levels to reduce a source of brittleness in the TC procedure.
 
@@ -1156,12 +1147,8 @@ private def tryHeuristic (t s : Expr) : MetaM Bool := do
       Then the entry-point for `isDefEq` checks the flag before returning `true`.
     -/
     checkpointDefEq do
-      let b ← isDefEqArgs tFn t.getAppArgs s.getAppArgs
-              <&&>
-              isListLevelDefEqAux tFn.constLevels! sFn.constLevels!
-      unless b do
-        trace[Meta.isDefEq.delta] "heuristic failed {t} =?= {s}"
-      pure b
+      isDefEqArgs tFn t.getAppArgs s.getAppArgs <&&>
+        isListLevelDefEqAux tFn.constLevels! sFn.constLevels!
 
 /-- Auxiliary method for isDefEqDelta -/
 private abbrev unfold (e : Expr) (failK : MetaM α) (successK : Expr → MetaM α) : MetaM α := do
@@ -1250,21 +1237,50 @@ private def unfoldReducibeDefEq (tInfo sInfo : ConstantInfo) (t s : Expr) : Meta
       unfoldDefEq tInfo sInfo t s
 
 /--
-  If `t` is a projection function application and `s` is not ==> `isDefEqRight t (unfold s)`
-  If `s` is a projection function application and `t` is not ==> `isDefEqRight (unfold t) s`
-
+  This is an auxiliary method for isDefEqDelta.
+  If `t` is a (non-class) projection function application and `s` is not ==> `isDefEqRight t (unfold s)`
+  If `s` is a (non-class) projection function application and `t` is not ==> `isDefEqRight (unfold t) s`
   Otherwise, use `unfoldReducibeDefEq`
 
-  Auxiliary method for isDefEqDelta -/
-private def unfoldNonProjFnDefEq (tInfo sInfo : ConstantInfo) (t s : Expr) : MetaM LBool := do
-  let tProj? ← isProjectionFn tInfo.name
-  let sProj? ← isProjectionFn sInfo.name
-  if tProj? && !sProj? then
-    unfold s (unfoldDefEq tInfo sInfo t s) fun s => isDefEqRight sInfo.name t s
-  else if !tProj? && sProj? then
-    unfold t (unfoldDefEq tInfo sInfo t s) fun t => isDefEqLeft tInfo.name t s
-  else
-    unfoldReducibeDefEq tInfo sInfo t s
+  One motivation for the heuristic above is unification problems such as
+  ```
+  id (?m.1) =?= (a, b).1
+  ```
+  We want to reduce the lhs instead of the rhs, and eventually assign `?m := (a, b)`.
+
+  Another motivation for the heuristic above is unification problems such as
+  ```
+  List.length (a :: as) =?= HAdd.hAdd (List.length as) 1
+  ```
+
+  However, for class projections, we also unpack them and check whether the result function is the one
+  on the other side. This is relevant for unification problems such as
+  ```
+  Foo.pow x 256 =?= Pow.pow x 256
+  ```
+  where the the `Pow` instance is wrapping `Foo.pow`
+  See issue #1419 for the complete example.
+-/
+private partial def unfoldNonProjFnDefEq (tInfo sInfo : ConstantInfo) (t s : Expr) : MetaM LBool := do
+  let tProjInfo? ← getProjectionFnInfo? tInfo.name
+  let sProjInfo? ← getProjectionFnInfo? sInfo.name
+  if let some tNew ← packedInstanceOf? tProjInfo? t sInfo.name then
+    isDefEqLeft tInfo.name tNew s
+  else if let some sNew ← packedInstanceOf? sProjInfo? s tInfo.name then
+    isDefEqRight sInfo.name t sNew
+  else  match tProjInfo?, sProjInfo? with
+    | some _, none => unfold s (unfoldDefEq tInfo sInfo t s) fun s => isDefEqRight sInfo.name t s
+    | none, some _ => unfold t (unfoldDefEq tInfo sInfo t s) fun t => isDefEqLeft tInfo.name t s
+    | _, _ => unfoldReducibeDefEq tInfo sInfo t s
+where
+  packedInstanceOf? (projInfo? : Option ProjectionFunctionInfo) (e : Expr) (declName : Name) : MetaM (Option Expr) := do
+    let some { fromClass := true, .. } := projInfo? | return none -- It is not a class projection
+    let some e ← unfoldDefinition? e | return none
+    let e ← whnfCore e
+    if e.isAppOf declName then return some e
+    let .const name _ := e.getAppFn | return none
+    -- Keep going if new `e` is also a class projection
+    packedInstanceOf? (← getProjectionFnInfo? name) e declName
 
 /--
   isDefEq by lazy delta reduction.
@@ -1689,53 +1705,21 @@ private def isExprDefEqExpensive (t : Expr) (s : Expr) : MetaM Bool := do
       if (← isDefEqUnitLike t s) then return true else
       isDefEqOnFailure t s
 
-/--
-  We only check DefEq cache if
-  - using default and all transparency modes, and
-  - smart unfolding is enabled, and
-  - proof irrelevance, eta for structures, and `zetaNonDep` are enabled
--/
-private def skipDefEqCache : MetaM Bool := do
-  match (← getConfig).transparency with
-  | .reducible => return true
-  | .instances => return true
-  | _ =>
-    unless smartUnfolding.get (← getOptions) do
-      return true
-    let cfg ← getConfig
-    return !(cfg.proofIrrelevance && cfg.etaStruct matches .all && cfg.zetaNonDep)
-
 private def mkCacheKey (t : Expr) (s : Expr) : Expr × Expr :=
   if Expr.quickLt t s then (t, s) else (s, t)
 
 private def getCachedResult (key : Expr × Expr) : MetaM LBool := do
-  let cache ← match (← getConfig).transparency with
-    | TransparencyMode.default => pure (← get).cache.defEqDefault
-    | TransparencyMode.all     => pure (← get).cache.defEqAll
-    | _                        => return .undef
-  match cache.find? key with
+  match (← get).cache.defEq.find? key with
   | some val => return val.toLBool
   | none => return .undef
 
 private def cacheResult (key : Expr × Expr) (result : Bool) : MetaM Unit := do
-  match (← getConfig).transparency with
-  | TransparencyMode.default => modify fun s => { s with cache.defEqDefault := s.cache.defEqDefault.insert key result }
-  | TransparencyMode.all     => modify fun s => { s with cache.defEqAll := s.cache.defEqAll.insert key result }
-  | _                        => pure ()
-
-private abbrev withResetUsedAssignment (k : MetaM α) : MetaM α := do
-  let usedAssignment := (← getMCtx).usedAssignment
-  modifyMCtx fun mctx => { mctx with usedAssignment := false }
-  try
-    k
-  finally
-    modifyMCtx fun mctx => { mctx with usedAssignment := usedAssignment || mctx.usedAssignment }
+  modifyDefEqCache fun c => c.insert key result
 
 @[export lean_is_expr_def_eq]
 partial def isExprDefEqAuxImpl (t : Expr) (s : Expr) : MetaM Bool := withIncRecDepth do
-  trace[Meta.isDefEq.step] "{t} =?= {s}"
+  withTraceNode `Meta.isDefEq (return m!"{exceptBoolEmoji ·} {t} =?= {s}") do
   checkMaxHeartbeats "isDefEq"
-  withNestedTraces do
   whenUndefDo (isDefEqQuick t s) do
   whenUndefDo (isDefEqProofIrrel t s) do
   -- We perform `whnfCore` again with `deltaAtProj := true` at `isExprDefEqExpensive` after `isDefEqProj`
@@ -1743,8 +1727,6 @@ partial def isExprDefEqAuxImpl (t : Expr) (s : Expr) : MetaM Bool := withIncRecD
   let s' ← whnfCore s (deltaAtProj := false)
   if t != t' || s != s' then
     isExprDefEqAuxImpl t' s'
-  else if (← skipDefEqCache) then
-    isExprDefEqExpensive t s
   else
     /-
       TODO: check whether the following `instantiateMVar`s are expensive or not in practice.
@@ -1766,22 +1748,19 @@ partial def isExprDefEqAuxImpl (t : Expr) (s : Expr) : MetaM Bool := withIncRecD
       trace[Meta.isDefEq.cache] "cache hit 'false' for {t} =?= {s}"
       return false
     | .undef =>
-      withResetUsedAssignment do
-        let result ← isExprDefEqExpensive t s
-        if numPostponed == (← getNumPostponed) && !(← getMCtx).usedAssignment then
-          -- It is only safe to cache the result if the mvars assignments have not been accessed/used,
-          -- and universe level variables have not been postponed.
-          trace[Meta.isDefEq.cache] "cache {result} for {t} =?= {s}"
-          cacheResult k result
-        return result
+      let result ← isExprDefEqExpensive t s
+      if numPostponed == (← getNumPostponed) then
+        trace[Meta.isDefEq.cache] "cache {result} for {t} =?= {s}"
+        cacheResult k result
+      return result
 
 builtin_initialize
   registerTraceClass `Meta.isDefEq
   registerTraceClass `Meta.isDefEq.foApprox
   registerTraceClass `Meta.isDefEq.constApprox
-  registerTraceClass `Meta.isDefEq.delta
-  registerTraceClass `Meta.isDefEq.step
+  registerTraceClass `Meta.isDefEq.delta (inherited := true)
   registerTraceClass `Meta.isDefEq.assign
+  registerTraceClass `Meta.isDefEq.assign.checkTypes (inherited := true)
   registerTraceClass `Meta.isDefEq.eta.struct
 
 end Lean.Meta

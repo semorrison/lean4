@@ -6,10 +6,11 @@ Authors: Leonardo de Moura
 import Lean.Meta.Eval
 import Lean.Elab.Tactic.Basic
 import Lean.Elab.SyntheticMVars
+import Lean.Linter.MissingDocs
 
 namespace Lean.Elab.Tactic
 open Meta
-macro doc?:(docComment)? "declare_config_elab" elabName:ident type:ident : command =>
+macro (name := configElab) doc?:(docComment)? "declare_config_elab" elabName:ident type:ident : command =>
  `(unsafe def evalUnsafe (e : Expr) : TermElabM $type :=
     Meta.evalExpr' (safety := .unsafe) $type ``$type e
    @[implementedBy evalUnsafe] opaque eval (e : Expr) : TermElabM $type
@@ -18,11 +19,15 @@ macro doc?:(docComment)? "declare_config_elab" elabName:ident type:ident : comma
      if optConfig.isNone then
        return { : $type }
      else
-       let c ← withoutModifyingState <| withLCtx {} {} <| withSaveInfoContext <| Term.withSynthesize do
+       let c ← withoutModifyingStateWithInfoAndMessages <| withLCtx {} {} <| withSaveInfoContext <| Term.withSynthesize do
          let c ← Term.elabTermEnsuringType optConfig[0][3] (Lean.mkConst ``$type)
          Term.synthesizeSyntheticMVarsNoPostponing
          instantiateMVars c
        eval c
   )
+
+open Linter.MissingDocs in
+@[builtinMissingDocsHandler Elab.Tactic.configElab]
+def checkConfigElab : SimpleHandler := mkSimpleHandler "config elab"
 
 end Lean.Elab.Tactic

@@ -9,6 +9,7 @@ import Lean.Meta.DiscrTree
 import Lean.Meta.AppBuilder
 import Lean.Meta.Eqns
 import Lean.Meta.Tactic.AuxLemma
+import Lean.DocString
 namespace Lean.Meta
 
 /--
@@ -274,8 +275,10 @@ def addSimpTheorem (ext : SimpExtension) (declName : Name) (post : Bool) (inv : 
   for simpThm in simpThms do
     ext.add (SimpEntry.thm simpThm) attrKind
 
-def mkSimpAttr (attrName : Name) (attrDescr : String) (ext : SimpExtension) : IO Unit :=
+def mkSimpAttr (attrName : Name) (attrDescr : String) (ext : SimpExtension)
+    (ref : Name := by exact decl_name%) : IO Unit :=
   registerBuiltinAttribute {
+    ref   := ref
     name  := attrName
     descr := attrDescr
     applicationTime := AttributeApplicationTime.afterCompilation
@@ -319,9 +322,11 @@ abbrev SimpExtensionMap := Std.HashMap Name SimpExtension
 
 builtin_initialize simpExtensionMapRef : IO.Ref SimpExtensionMap ← IO.mkRef {}
 
-def registerSimpAttr (attrName : Name) (attrDescr : String) (extName : Name := attrName.appendAfter "Ext") : IO SimpExtension := do
+def registerSimpAttr (attrName : Name) (attrDescr : String)
+    (ref : Name := by exact decl_name%)
+    (extName : Name := attrName.appendAfter "Ext") : IO SimpExtension := do
   let ext ← mkSimpExt extName
-  mkSimpAttr attrName attrDescr ext -- Remark: it will fail if it is not performed during initialization
+  mkSimpAttr attrName attrDescr ext ref -- Remark: it will fail if it is not performed during initialization
   simpExtensionMapRef.modify fun map => map.insert attrName ext
   return ext
 
@@ -411,11 +416,13 @@ def SimpTheoremsArray.isErased (thmsArray : SimpTheoremsArray) (thmId : Name) : 
 def SimpTheoremsArray.isDeclToUnfold (thmsArray : SimpTheoremsArray) (declName : Name) : Bool :=
   thmsArray.any fun thms => thms.isDeclToUnfold declName
 
-macro doc?:(docComment)? "register_simp_attr" id:ident descr:str : command => do
+macro (name := _root_.Lean.Parser.Command.registerSimpAttr) doc:docComment
+  "register_simp_attr" id:ident : command => do
   let str := id.getId.toString
   let idParser := mkIdentFrom id (`Parser.Attr ++ id.getId)
-  `($[$doc?]? initialize ext : SimpExtension ← registerSimpAttr $(quote id.getId) $descr
-    syntax (name := $idParser:ident) $(quote str):str (Parser.Tactic.simpPre <|> Parser.Tactic.simpPost)? (prio)? : attr)
+  let descr := quote (removeLeadingSpaces doc.getDocString)
+  `($doc:docComment initialize ext : SimpExtension ← registerSimpAttr $(quote id.getId) $descr $(quote id.getId)
+    $doc:docComment syntax (name := $idParser:ident) $(quote str):str (Parser.Tactic.simpPre <|> Parser.Tactic.simpPost)? (prio)? : attr)
 
 end Meta
 

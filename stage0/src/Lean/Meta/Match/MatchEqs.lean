@@ -6,6 +6,7 @@ Authors: Leonardo de Moura
 import Lean.Meta.Match.Match
 import Lean.Meta.Match.MatchEqsExt
 import Lean.Meta.Tactic.Apply
+import Lean.Meta.Tactic.Refl
 import Lean.Meta.Tactic.Delta
 import Lean.Meta.Tactic.SplitIf
 import Lean.Meta.Tactic.Injection
@@ -20,7 +21,7 @@ partial def casesOnStuckLHS (mvarId : MVarId) : MetaM (Array MVarId) := do
   let target ← mvarId.getType
   if let some (_, lhs, _) ← matchEq? target then
     if let some fvarId ← findFVar? lhs then
-      return (← cases mvarId fvarId).map fun s => s.mvarId
+      return (←  mvarId.cases fvarId).map fun s => s.mvarId
   throwError "'casesOnStuckLHS' failed"
 where
   findFVar? (e : Expr) : MetaM (Option FVarId) := do
@@ -58,7 +59,7 @@ def unfoldNamedPattern (e : Expr) : MetaM Expr := do
     if let some e := isNamedPattern? e then
       if let some eNew ← unfoldDefinition? e then
         return TransformStep.visit eNew
-    return TransformStep.visit e
+    return .continue
   Meta.transform e (pre := visit)
 
 /--
@@ -177,7 +178,7 @@ private def isDone : M Bool :=
 
 /-- Customized `contradiction` tactic for `simpH?` -/
 private def contradiction (mvarId : MVarId) : MetaM Bool :=
-  contradictionCore mvarId { genDiseq := false, emptyType := false }
+   mvarId.contradictionCore { genDiseq := false, emptyType := false }
 
 /--
   Auxiliary tactic that tries to replace as many variables as possible and then apply `contradiction`.
@@ -300,9 +301,9 @@ where
     let mvarId' ← mvarId.modifyTargetEqLHS whnfCore
     let mvarId := mvarId'
     let subgoals ←
-      (do applyRefl mvarId; return #[])
+      (do mvarId.refl; return #[])
       <|>
-      (do contradiction mvarId { genDiseq := true }; return #[])
+      (do mvarId.contradiction { genDiseq := true }; return #[])
       <|>
       (casesOnStuckLHS mvarId)
       <|>
@@ -544,26 +545,23 @@ where
     transform e fun e => do
       if (← isCastEqRec e) then
         return .done (← convertCastEqRec e)
-      else match e.getAppFn with
-        | Expr.fvar fvarId .. =>
-          match (← read).find? fvarId with
-          | some (altNew, numParams, argMask) =>
-            trace[Meta.Match.matchEqs] ">> argMask: {argMask}, e: {e}, {altNew}"
-            let mut newArgs := #[]
-            let argMask := trimFalseTrail argMask
-            unless e.getAppNumArgs ≥ argMask.size do
-              throwError "unexpected occurrence of `match`-expression alternative (aka minor premise) while creating splitter/eliminator theorem for `{matchDeclName}`, minor premise is partially applied{indentExpr e}\npossible solution if you are matching on inductive families: add its indices as additional discriminants"
-            for arg in e.getAppArgs, includeArg in argMask do
-              if includeArg then
-                newArgs := newArgs.push arg
-            let eNew := mkAppN altNew newArgs
-            /- Recall that `numParams` does not include the equalities associated with discriminants of the form `h : discr`. -/
-            let (mvars, _, _) ← forallMetaBoundedTelescope (← inferType eNew) (numParams - newArgs.size) (kind := MetavarKind.syntheticOpaque)
-            modify fun s => s ++ (mvars.map (·.mvarId!))
-            let eNew := mkAppN eNew mvars
-            return TransformStep.done eNew
-          | none => return TransformStep.visit e
-        | _ => return TransformStep.visit e
+      else
+        let Expr.fvar fvarId .. := e.getAppFn | return .continue
+        let some (altNew, numParams, argMask) := (← read).find? fvarId | return .continue
+        trace[Meta.Match.matchEqs] ">> argMask: {argMask}, e: {e}, {altNew}"
+        let mut newArgs := #[]
+        let argMask := trimFalseTrail argMask
+        unless e.getAppNumArgs ≥ argMask.size do
+          throwError "unexpected occurrence of `match`-expression alternative (aka minor premise) while creating splitter/eliminator theorem for `{matchDeclName}`, minor premise is partially applied{indentExpr e}\npossible solution if you are matching on inductive families: add its indices as additional discriminants"
+        for arg in e.getAppArgs, includeArg in argMask do
+          if includeArg then
+            newArgs := newArgs.push arg
+        let eNew := mkAppN altNew newArgs
+        /- Recall that `numParams` does not include the equalities associated with discriminants of the form `h : discr`. -/
+        let (mvars, _, _) ← forallMetaBoundedTelescope (← inferType eNew) (numParams - newArgs.size) (kind := MetavarKind.syntheticOpaque)
+        modify fun s => s ++ (mvars.map (·.mvarId!))
+        let eNew := mkAppN eNew mvars
+        return TransformStep.done eNew
 
   proveSubgoalLoop (mvarId : MVarId) : MetaM Unit := do
     trace[Meta.Match.matchEqs] "proveSubgoalLoop\n{mvarId}"
@@ -572,7 +570,7 @@ where
     | InjectionAnyResult.failed =>
       let mvarId' ← substVars mvarId
       if mvarId' == mvarId then
-        if (← contradictionCore mvarId {}) then
+        if (← mvarId.contradictionCore {}) then
           return ()
         throwError "failed to generate splitter for match auxiliary declaration '{matchDeclName}', unsolved subgoal:\n{MessageData.ofGoal mvarId}"
       else
@@ -641,7 +639,7 @@ private partial def mkEquationsFor (matchDeclName : Name) :  MetaM MatchEqns := 
           if let some h ← simpH? h patterns.size then
             hs := hs.push h
         trace[Meta.Match.matchEqs] "hs: {hs}"
-        let splitterAltType ← mkForallFVars ys (← hs.foldrM (init := (← mkForallFVars eqs altResultType)) mkArrow)
+        let splitterAltType ← mkForallFVars ys (← hs.foldrM (init := (← mkForallFVars eqs altResultType)) (mkArrow · ·))
         let splitterAltNumParam := hs.size + ys.size
         -- Create a proposition for representing terms that do not match `patterns`
         let mut notAlt := mkConst ``False
@@ -655,7 +653,7 @@ private partial def mkEquationsFor (matchDeclName : Name) :  MetaM MatchEqns := 
           let lhs := mkAppN (mkConst constInfo.name us) (params ++ #[motive] ++ patterns ++ alts)
           let rhs := mkAppN alt rhsArgs
           let thmType ← mkEq lhs rhs
-          let thmType ← hs.foldrM (init := thmType) mkArrow
+          let thmType ← hs.foldrM (init := thmType) (mkArrow · ·)
           let thmType ← mkForallFVars (params ++ #[motive] ++ ys ++ alts) thmType
           let thmType ← unfoldNamedPattern thmType
           let thmVal ← proveCondEqThm matchDeclName thmType

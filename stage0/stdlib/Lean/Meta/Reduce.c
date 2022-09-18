@@ -21,12 +21,12 @@ static lean_object* l_Lean_Meta_reduce_visit___lambda__4___closed__11;
 lean_object* l_Lean_Name_str___override(lean_object*, lean_object*);
 lean_object* l_Lean_Meta_mkForallFVars(lean_object*, lean_object*, uint8_t, uint8_t, uint8_t, lean_object*, lean_object*, lean_object*, lean_object*, lean_object*);
 static lean_object* l_Lean_throwMaxRecDepthAt___at_Lean_Meta_reduce_visit___spec__9___closed__2;
-lean_object* l___private_Std_Data_HashMap_0__Std_numBucketsForCapacity(lean_object*);
 LEAN_EXPORT lean_object* l_Std_AssocList_foldlM___at_Lean_Meta_reduce_visit___spec__14(lean_object*, lean_object*);
 lean_object* lean_array_uget(lean_object*, size_t);
 extern lean_object* l_Lean_maxRecDepthErrorMessage;
 lean_object* lean_array_uset(lean_object*, size_t, lean_object*);
 LEAN_EXPORT lean_object* l_Lean_Meta_reduce_visit___boxed(lean_object*, lean_object*, lean_object*, lean_object*, lean_object*, lean_object*, lean_object*, lean_object*, lean_object*, lean_object*);
+lean_object* l___private_Lean_Data_HashMap_0__Std_numBucketsForCapacity(lean_object*);
 lean_object* lean_st_ref_get(lean_object*, lean_object*);
 LEAN_EXPORT lean_object* l_Std_Range_forIn_loop___at_Lean_Meta_reduce_visit___spec__5___boxed(lean_object*, lean_object*, lean_object*, lean_object*, lean_object*, lean_object*, lean_object*, lean_object*, lean_object*, lean_object*, lean_object*, lean_object*, lean_object*, lean_object*, lean_object*);
 LEAN_EXPORT lean_object* l_Std_AssocList_find_x3f___at_Lean_Meta_reduce_visit___spec__2(lean_object*, lean_object*);
@@ -65,6 +65,7 @@ static lean_object* l_Lean_Meta_reduce_visit___lambda__4___closed__4;
 lean_object* lean_st_mk_ref(lean_object*, lean_object*);
 uint64_t l_Lean_Expr_hash(lean_object*);
 static lean_object* l_Lean_Meta_reduce_visit___lambda__4___closed__9;
+lean_object* l_panic___at_String_toNat_x21___spec__1(lean_object*);
 LEAN_EXPORT lean_object* l_Lean_Meta_reduce_visit___lambda__4___boxed(lean_object*, lean_object*, lean_object*, lean_object*, lean_object*, lean_object*, lean_object*, lean_object*, lean_object*, lean_object*, lean_object*);
 lean_object* l_Lean_Expr_sort___override(lean_object*);
 lean_object* l_Lean_Expr_natLit_x3f(lean_object*);
@@ -98,7 +99,6 @@ lean_object* lean_st_ref_set(lean_object*, lean_object*, lean_object*);
 LEAN_EXPORT lean_object* l_Lean_Meta_reduce_visit___lambda__2(uint8_t, uint8_t, uint8_t, lean_object*, lean_object*, lean_object*, lean_object*, lean_object*, lean_object*, lean_object*, lean_object*);
 uint8_t lean_nat_dec_eq(lean_object*, lean_object*);
 LEAN_EXPORT lean_object* l_Lean_Meta_reduce_visit___lambda__3(uint8_t, uint8_t, uint8_t, lean_object*, lean_object*, lean_object*, lean_object*, lean_object*, lean_object*, lean_object*, lean_object*);
-lean_object* l_panic___at_Lean_TSyntax_getNat___spec__1(lean_object*);
 lean_object* lean_mk_array(lean_object*, lean_object*);
 static lean_object* l_Lean_Meta_reduce_visit___lambda__4___closed__10;
 LEAN_EXPORT lean_object* l_ReaderT_bind___at_Lean_Meta_reduce_visit___spec__4___rarg(lean_object*, lean_object*, lean_object*, lean_object*, lean_object*, lean_object*, lean_object*, lean_object*);
@@ -1174,7 +1174,7 @@ lean_ctor_set(x_15, 0, x_2);
 lean_ctor_set(x_15, 1, x_3);
 lean_ctor_set(x_15, 2, x_11);
 x_16 = lean_array_uset(x_6, x_10, x_15);
-x_17 = l___private_Std_Data_HashMap_0__Std_numBucketsForCapacity(x_14);
+x_17 = l___private_Lean_Data_HashMap_0__Std_numBucketsForCapacity(x_14);
 x_18 = lean_nat_dec_le(x_17, x_7);
 lean_dec(x_7);
 lean_dec(x_17);
@@ -1227,7 +1227,7 @@ lean_ctor_set(x_32, 0, x_2);
 lean_ctor_set(x_32, 1, x_3);
 lean_ctor_set(x_32, 2, x_28);
 x_33 = lean_array_uset(x_23, x_27, x_32);
-x_34 = l___private_Std_Data_HashMap_0__Std_numBucketsForCapacity(x_31);
+x_34 = l___private_Lean_Data_HashMap_0__Std_numBucketsForCapacity(x_31);
 x_35 = lean_nat_dec_le(x_34, x_24);
 lean_dec(x_24);
 lean_dec(x_34);
@@ -1436,7 +1436,7 @@ _start:
 lean_object* x_1; lean_object* x_2; lean_object* x_3; lean_object* x_4; lean_object* x_5; lean_object* x_6; 
 x_1 = l_Lean_Meta_reduce_visit___lambda__4___closed__2;
 x_2 = l_Lean_Meta_reduce_visit___lambda__4___closed__3;
-x_3 = lean_unsigned_to_nat(70u);
+x_3 = lean_unsigned_to_nat(77u);
 x_4 = lean_unsigned_to_nat(36u);
 x_5 = l_Lean_Meta_reduce_visit___lambda__4___closed__4;
 x_6 = l___private_Init_Util_0__mkPanicMessageWithDecl(x_1, x_2, x_3, x_4, x_5);
@@ -1765,7 +1765,7 @@ if (lean_obj_tag(x_42) == 0)
 {
 lean_object* x_43; lean_object* x_44; lean_object* x_45; lean_object* x_46; lean_object* x_47; 
 x_43 = l_Lean_Meta_reduce_visit___lambda__4___closed__9;
-x_44 = l_panic___at_Lean_TSyntax_getNat___spec__1(x_43);
+x_44 = l_panic___at_String_toNat_x21___spec__1(x_43);
 x_45 = lean_nat_add(x_44, x_29);
 lean_dec(x_44);
 x_46 = l_Lean_mkRawNatLit(x_45);
@@ -1808,7 +1808,7 @@ if (lean_obj_tag(x_53) == 0)
 {
 lean_object* x_54; lean_object* x_55; lean_object* x_56; lean_object* x_57; lean_object* x_58; 
 x_54 = l_Lean_Meta_reduce_visit___lambda__4___closed__9;
-x_55 = l_panic___at_Lean_TSyntax_getNat___spec__1(x_54);
+x_55 = l_panic___at_String_toNat_x21___spec__1(x_54);
 x_56 = lean_nat_add(x_55, x_29);
 lean_dec(x_55);
 x_57 = l_Lean_mkRawNatLit(x_56);
@@ -2007,7 +2007,7 @@ if (lean_obj_tag(x_101) == 0)
 {
 lean_object* x_102; lean_object* x_103; lean_object* x_104; lean_object* x_105; lean_object* x_106; 
 x_102 = l_Lean_Meta_reduce_visit___lambda__4___closed__9;
-x_103 = l_panic___at_Lean_TSyntax_getNat___spec__1(x_102);
+x_103 = l_panic___at_String_toNat_x21___spec__1(x_102);
 x_104 = lean_nat_add(x_103, x_88);
 lean_dec(x_103);
 x_105 = l_Lean_mkRawNatLit(x_104);
@@ -2050,7 +2050,7 @@ if (lean_obj_tag(x_112) == 0)
 {
 lean_object* x_113; lean_object* x_114; lean_object* x_115; lean_object* x_116; lean_object* x_117; 
 x_113 = l_Lean_Meta_reduce_visit___lambda__4___closed__9;
-x_114 = l_panic___at_Lean_TSyntax_getNat___spec__1(x_113);
+x_114 = l_panic___at_String_toNat_x21___spec__1(x_113);
 x_115 = lean_nat_add(x_114, x_88);
 lean_dec(x_114);
 x_116 = l_Lean_mkRawNatLit(x_115);

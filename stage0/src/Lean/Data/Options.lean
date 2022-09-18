@@ -5,6 +5,7 @@ Authors: Sebastian Ullrich and Leonardo de Moura
 -/
 import Lean.ImportingFlag
 import Lean.Data.KVMap
+import Lean.Data.NameMap
 
 namespace Lean
 
@@ -51,7 +52,7 @@ def getOptionDecl (name : Name) : IO OptionDecl := do
   let (some decl) ← pure (decls.find? name) | throw $ IO.userError s!"unknown option '{name}'"
   pure decl
 
-def getOptionDefaulValue (name : Name) : IO DataValue := do
+def getOptionDefaultValue (name : Name) : IO DataValue := do
   let decl ← getOptionDecl name
   pure decl.defValue
 
@@ -63,7 +64,7 @@ def setOptionFromString (opts : Options) (entry : String) : IO Options := do
   let ps := (entry.splitOn "=").map String.trim
   let [key, val] ← pure ps | throw $ IO.userError "invalid configuration option entry, it must be of the form '<key> = <value>'"
   let key := Name.mkSimple key
-  let defValue ← getOptionDefaulValue key
+  let defValue ← getOptionDefaultValue key
   match defValue with
   | DataValue.ofString _ => pure $ opts.setString key val
   | DataValue.ofBool _   =>
@@ -146,10 +147,10 @@ protected def register [KVMap.Value α] (name : Name) (decl : Lean.Option.Decl �
   registerOption name { defValue := KVMap.Value.toDataValue decl.defValue, group := decl.group, descr := decl.descr }
   return { name := name, defValue := decl.defValue }
 
-macro doc?:(docComment)? "register_builtin_option" name:ident " : " type:term " := " decl:term : command =>
+macro (name := registerBuiltinOption) doc?:(docComment)? "register_builtin_option" name:ident " : " type:term " := " decl:term : command =>
   `($[$doc?]? builtin_initialize $name : Lean.Option $type ← Lean.Option.register $(quote name.getId) $decl)
 
-macro doc?:(docComment)? "register_option" name:ident " : " type:term " := " decl:term : command =>
+macro (name := registerOption) doc?:(docComment)? "register_option" name:ident " : " type:term " := " decl:term : command =>
   `($[$doc?]? initialize $name : Lean.Option $type ← Lean.Option.register $(quote name.getId) $decl)
 
 end Option

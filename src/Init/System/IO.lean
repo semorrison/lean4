@@ -172,7 +172,7 @@ def lazyPure (fn : Unit → α) : IO α :=
 If `nBytes = 0`, return immediately with an empty buffer. -/
 @[extern "lean_io_get_random_bytes"] opaque getRandomBytes (nBytes : USize) : IO ByteArray
 
-def sleep (ms : UInt32) : IO Unit :=
+def sleep (ms : UInt32) : BaseIO Unit :=
   -- TODO: add a proper primitive for IO.sleep
   fun s => dbgSleep ms fun _ => EStateM.Result.ok () s
 
@@ -205,8 +205,13 @@ def sleep (ms : UInt32) : IO Unit :=
 @[extern "lean_io_wait"] opaque wait (t : Task α) : BaseIO α :=
   return t.get
 
+local macro "nonempty_list" : tactic =>
+  `(exact Nat.zero_lt_succ _)
+
 /-- Wait until any of the tasks in the given list has finished, then return its result. -/
-@[extern "lean_io_wait_any"] opaque waitAny : @& List (Task α) → IO α
+@[extern "lean_io_wait_any"] opaque waitAny (tasks : @& List (Task α))
+    (h : tasks.length > 0 := by nonempty_list) : BaseIO α :=
+  return tasks[0].get
 
 /-- Helper method for implementing "deterministic" timeouts. It is the number of "small" memory allocations performed by the current execution thread. -/
 @[extern "lean_io_get_num_heartbeats"] opaque getNumHeartbeats : BaseIO Nat
@@ -220,10 +225,19 @@ opaque FS.Handle : Type := Unit
   A pure-Lean abstraction of POSIX streams. We use `Stream`s for the standard streams stdin/stdout/stderr so we can
   capture output of `#eval` commands into memory. -/
 structure FS.Stream where
-  isEof   : IO Bool
   flush   : IO Unit
+  /--
+Read up to the given number of bytes from the stream.
+If the returned array is empty, an end-of-file marker has been reached.
+Note that EOF does not actually close a stream, so further reads may block and return more data.
+  -/
   read    : USize → IO ByteArray
   write   : ByteArray → IO Unit
+  /--
+Read text up to (including) the next line break from the stream.
+If the returned string is empty, an end-of-file marker has been reached.
+Note that EOF does not actually close a stream, so further reads may block and return more data.
+  -/
   getLine : IO String
   putStr  : String → IO Unit
   deriving Inhabited
@@ -266,16 +280,20 @@ private def fopenFlags (m : FS.Mode) (b : Bool) : String :=
 def mk (fn : FilePath) (Mode : Mode) (bin : Bool := true) : IO Handle :=
   mkPrim fn (fopenFlags Mode bin)
 
-/--
-Returns whether the end of the file has been reached while reading a file.
-`h.isEof` returns true /after/ the first attempt at reading past the end of `h`.
-Once `h.isEof` is true, reading `h` will always return an empty array.
--/
-@[extern "lean_io_prim_handle_is_eof"] opaque isEof (h : @& Handle) : BaseIO Bool
 @[extern "lean_io_prim_handle_flush"] opaque flush (h : @& Handle) : IO Unit
-@[extern "lean_io_prim_handle_read"] opaque read  (h : @& Handle) (bytes : USize) : IO ByteArray
+/--
+Read up to the given number of bytes from the handle.
+If the returned array is empty, an end-of-file marker has been reached.
+Note that EOF does not actually close a handle, so further reads may block and return more data.
+-/
+@[extern "lean_io_prim_handle_read"] opaque read (h : @& Handle) (bytes : USize) : IO ByteArray
 @[extern "lean_io_prim_handle_write"] opaque write (h : @& Handle) (buffer : @& ByteArray) : IO Unit
 
+/--
+Read text up to (including) the next line break from the handle.
+If the returned string is empty, an end-of-file marker has been reached.
+Note that EOF does not actually close a handle, so further reads may block and return more data.
+-/
 @[extern "lean_io_prim_handle_get_line"] opaque getLine (h : @& Handle) : IO String
 @[extern "lean_io_prim_handle_put_str"] opaque putStr (h : @& Handle) (s : @& String) : IO Unit
 
@@ -612,7 +630,6 @@ namespace Stream
 
 @[export lean_stream_of_handle]
 def ofHandle (h : Handle) : Stream := {
-  isEof   := Handle.isEof h,
   flush   := Handle.flush h,
   read    := Handle.read h,
   write   := Handle.write h,
@@ -625,7 +642,6 @@ structure Buffer where
   pos  : Nat := 0
 
 def ofBuffer (r : Ref Buffer) : Stream := {
-  isEof   := do let b ← r.get; pure <| b.pos >= b.data.size,
   flush   := pure (),
   read    := fun n => r.modifyGet fun b =>
     let data := b.data.extract b.pos (b.pos + n.toNat)
@@ -686,7 +702,12 @@ instance [Eval α] : Eval (IO α) where
     let a ← x ()
     Eval.eval fun _ => a
 
-@[noinline, nospecialize] def runEval [Eval α] (a : Unit → α) : IO (String × Except IO.Error Unit) :=
+instance [Eval α] : Eval (BaseIO α) where
+  eval x _ := do
+    let a ← x ()
+    Eval.eval fun _ => a
+
+def runEval [Eval α] (a : Unit → α) : IO (String × Except IO.Error Unit) :=
   IO.FS.withIsolatedStreams (Eval.eval a false |>.toBaseIO)
 
 end Lean

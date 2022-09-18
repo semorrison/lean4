@@ -9,11 +9,11 @@ import Lean.Parser.Extra
 namespace Lean.Parser
 
 builtin_initialize
-  registerBuiltinParserAttribute `builtinPrioParser `prio LeadingIdentBehavior.both
+  registerBuiltinParserAttribute `builtinPrioParser ``Category.prio .both
   registerBuiltinDynamicParserAttribute `prioParser `prio
 
 builtin_initialize
-  registerBuiltinParserAttribute `builtinAttrParser `attr LeadingIdentBehavior.symbol
+  registerBuiltinParserAttribute `builtinAttrParser ``Category.attr .symbol
   registerBuiltinDynamicParserAttribute `attrParser `attr
 
 @[inline] def priorityParser (rbp : Nat := 0) : Parser :=
@@ -42,6 +42,7 @@ namespace Attr
 @[builtinAttrParser] def «class»         := leading_parser "class"
 @[builtinAttrParser] def «instance»      := leading_parser "instance" >> optional priorityParser
 @[builtinAttrParser] def defaultInstance := leading_parser nonReservedSymbol "defaultInstance " >> optional priorityParser
+@[builtinAttrParser] def «specialize»    := leading_parser (nonReservedSymbol "specialize") >> many (ident <|> numLit)
 
 def externEntry := leading_parser optional ident >> optional (nonReservedSymbol "inline ") >> strLit
 @[builtinAttrParser] def extern     := leading_parser nonReservedSymbol "extern " >> optional numLit >> many externEntry

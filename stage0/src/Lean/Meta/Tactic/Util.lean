@@ -10,7 +10,7 @@ import Lean.Meta.PPGoal
 
 namespace Lean.Meta
 
-/-- Aka user name -/
+/-- Get the user name of the given metavariable. -/
 def _root_.Lean.MVarId.getTag (mvarId : MVarId) : MetaM Name :=
   return (← mvarId.getDecl).userName
 
@@ -45,9 +45,7 @@ def throwTacticEx (tacticName : Name) (mvarId : MVarId) (msg : MessageData) : Me
 def throwNestedTacticEx {α} (tacticName : Name) (ex : Exception) : MetaM α := do
   throwError "tactic '{tacticName}' failed, nested error:\n{ex.toMessageData}"
 
-/--
-Throw error message if `mvarId` is already assigned.
--/
+/-- Throw a tactic exception with given tactic name if the given metavariable is assigned. -/
 def _root_.Lean.MVarId.checkNotAssigned (mvarId : MVarId) (tacticName : Name) : MetaM Unit := do
   if (← mvarId.isAssigned) then
     throwTacticEx tacticName mvarId "metavariable has already been assigned"
@@ -56,6 +54,7 @@ def _root_.Lean.MVarId.checkNotAssigned (mvarId : MVarId) (tacticName : Name) : 
 def checkNotAssigned (mvarId : MVarId) (tacticName : Name) : MetaM Unit := do
   mvarId.checkNotAssigned tacticName
 
+/-- Get the type the given metavariable. -/
 def _root_.Lean.MVarId.getType (mvarId : MVarId) : MetaM Expr :=
   return (← mvarId.getDecl).type
 
@@ -63,6 +62,8 @@ def _root_.Lean.MVarId.getType (mvarId : MVarId) : MetaM Expr :=
 def getMVarType (mvarId : MVarId) : MetaM Expr :=
   mvarId.getType
 
+/-- Get the type the given metavariable after instantiating metavariables and reducing to
+weak head normal form. -/
 def _root_.Lean.MVarId.getType' (mvarId : MVarId) : MetaM Expr := do
   whnf (← instantiateMVars (← mvarId.getType))
 
@@ -155,6 +156,12 @@ def getPropHyps : MetaM (Array FVarId) := do
       if (← isProp localDecl.type) then
         result := result.push localDecl.fvarId
   return result
+
+def _root_.Lean.MVarId.inferInstance (mvarId : MVarId) : MetaM Unit := mvarId.withContext do
+  mvarId.checkNotAssigned `infer_instance
+  let synthVal ← synthInstance (← mvarId.getType)
+  unless (← isDefEq (mkMVar mvarId) synthVal) do
+    throwTacticEx `infer_instance mvarId "`infer_instance` tactic failed to assign instance"
 
 inductive TacticResultCNM where
   | closed

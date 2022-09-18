@@ -3,7 +3,6 @@ Copyright (c) 2020 Microsoft Corporation. All rights reserved.
 Released under Apache 2.0 license as described in the file LICENSE.
 Authors: Leonardo de Moura
 -/
-import Std.ShareCommon
 import Lean.MetavarContext
 import Lean.Environment
 import Lean.Util.FoldConsts
@@ -279,7 +278,7 @@ partial def process : ClosureM Unit := do
         modify fun s => { s with newLetDecls := s.newLetDecls.push <| LocalDecl.ldecl default newFVarId userName type val false }
         /- We don't want to interleave let and lambda declarations in our closure. So, we expand any occurrences of newFVarId
            at `newLocalDecls` -/
-        modify fun s => { s with newLocalDecls := s.newLocalDecls.map (replaceFVarIdAtLocalDecl newFVarId val) }
+        modify fun s => { s with newLocalDecls := s.newLocalDecls.map (·.replaceFVarId newFVarId val) }
         process
 
 @[inline] def mkBinding (isLambda : Bool) (decls : Array LocalDecl) (b : Expr) : Expr :=

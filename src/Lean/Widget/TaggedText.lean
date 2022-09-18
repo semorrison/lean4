@@ -15,11 +15,11 @@ Much like Lean 3 [`sf`](https://github.com/leanprover-community/mathlib/blob/bfa
 but with indentation already stringified. -/
 inductive TaggedText (α : Type u) where
   | text   : String → TaggedText α
-  | /-- Invariants:
+  /-- Invariants:
   - non-empty
   - no adjacent `text` elements (they should be collapsed)
   - no directly nested `append`s (but `append #[tag _ (append ..)]` is okay) -/
-   append : Array (TaggedText α) → TaggedText α
+  | append : Array (TaggedText α) → TaggedText α
   | tag    : α → TaggedText α → TaggedText α
   deriving Inhabited, BEq, Repr, FromJson, ToJson
 
@@ -63,9 +63,9 @@ partial def rewriteM : TaggedText α → m (TaggedText β)
   | append as => return append (← as.mapM rewriteM)
   | tag t a => f t a
 
-instance [RpcEncoding α β] : RpcEncoding (TaggedText α) (TaggedText β) where
-  rpcEncode a := a.mapM rpcEncode
-  rpcDecode a := a.mapM rpcDecode
+instance [RpcEncodable α] : RpcEncodable (TaggedText α) where
+  rpcEncode a := toJson <$> a.mapM rpcEncode
+  rpcDecode a := do TaggedText.mapM rpcDecode (← fromJson? a)
 
 private structure TaggedState where
   out      : TaggedText (Nat × Nat)              := TaggedText.text ""

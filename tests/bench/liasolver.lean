@@ -4,7 +4,7 @@ Linear Diophantine equation solver
 Author: Marc Huisinga
 -/
 
-import Std.Data.HashMap
+import Lean.Data.HashMap
 
 open Std
 

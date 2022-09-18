@@ -3,17 +3,14 @@ Copyright (c) 2020 Microsoft Corporation. All rights reserved.
 Released under Apache 2.0 license as described in the file LICENSE.
 Authors: Leonardo de Moura
 -/
-import Lean.Util.CollectFVars
-import Lean.Parser.Term
-import Lean.Meta.Match.MatchPatternAttr
 import Lean.Meta.Match.Match
 import Lean.Meta.GeneralizeVars
 import Lean.Meta.ForEachExpr
-import Lean.Elab.SyntheticMVars
-import Lean.Elab.Arg
-import Lean.Elab.PatternVar
 import Lean.Elab.AuxDiscr
 import Lean.Elab.BindersUtil
+import Lean.Elab.PatternVar
+import Lean.Elab.Quotation.Precheck
+import Lean.Elab.SyntheticMVars
 
 namespace Lean.Elab.Term
 open Meta
@@ -62,7 +59,7 @@ private def elabAtomicDiscr (discr : Syntax) : TermElabM Expr := do
   | some e@(Expr.fvar fvarId) =>
     let localDecl ← fvarId.getDecl
     if !isAuxDiscrName localDecl.userName then
-      addTermInfo discr e -- it is not an auxiliary local created by `expandNonAtomicDiscrs?`
+      addTermInfo term e -- it is not an auxiliary local created by `expandNonAtomicDiscrs?`
     else
       instantiateMVars localDecl.value
   | _ => throwErrorAt discr "unexpected discriminant"
@@ -805,6 +802,10 @@ private def elabMatchAltView (discrs : Array Discr) (alt : MatchAltView) (matchT
         withEqs discrs altLHS.patterns fun eqs =>
           withLocalInstances altLHS.fvarDecls do
             trace[Elab.match] "elabMatchAltView: {matchType}"
+            -- connect match-generalized pattern fvars, which are a suffix of `latLHS.fvarDecls`,
+            -- to their original fvars (independently of whether they were cleared successfully) in the info tree
+            for (fvar, baseId) in altLHS.fvarDecls.toArray.reverse.zip toClear.reverse do
+              pushInfoLeaf <| .ofFVarAliasInfo { id := fvar.fvarId, baseId }
             let matchType ← instantiateMVars matchType
             -- If `matchType` is of the form `@m ...`, we create a new metavariable with the current scope.
             -- This improves the effectiveness of the `isDefEq` default approximations
@@ -1008,6 +1009,7 @@ register_builtin_option match.ignoreUnusedAlts : Bool := {
 def reportMatcherResultErrors (altLHSS : List AltLHS) (result : MatcherResult) : TermElabM Unit := do
   unless result.counterExamples.isEmpty do
     withHeadRefOnly <| logError m!"missing cases:\n{Meta.Match.counterExamplesToMessageData result.counterExamples}"
+    return ()
   unless match.ignoreUnusedAlts.get (← getOptions) || result.unusedAltIdxs.isEmpty do
     let mut i := 0
     for alt in altLHSS do
@@ -1240,15 +1242,6 @@ where
   isAtomicIdent (stx : Syntax) : Bool :=
     stx.isIdent && stx.getId.eraseMacroScopes.isAtomic
 
-/--
-Pattern matching. `match e, ... with | p, ... => f | ...` matches each given
-term `e` against each pattern `p` of a match alternative. When all patterns
-of an alternative match, the `match` term evaluates to the value of the
-corresponding right-hand side `f` with the pattern variables bound to the
-respective matched values.
-When not constructing a proof, `match` does not automatically substitute variables
-matched on in dependent variables' types. Use `match (generalizing := true) ...` to
-enforce this. -/
 @[builtinTermElab «match»] def elabMatch : TermElab := fun stx expectedType? => do
   match stx with
   | `(match $discr:term with | $y:ident => $rhs) =>
@@ -1272,9 +1265,6 @@ builtin_initialize
   registerTraceClass `Elab.match
 
 -- leading_parser:leadPrec "nomatch " >> termParser
-/-- Empty match/ex falso. `nomatch e` is of arbitrary type `α : Sort u` if
-Lean can show that an empty set of patterns is exhaustive given `e`'s type,
-e.g. because it has no constructors. -/
 @[builtinTermElab «nomatch»] def elabNoMatch : TermElab := fun stx expectedType? => do
   match stx with
   | `(nomatch $discrExpr) =>

@@ -3,8 +3,9 @@ Copyright (c) 2020 Microsoft Corporation. All rights reserved.
 Released under Apache 2.0 license as described in the file LICENSE.
 Authors: Leonardo de Moura, Sebastian Ullrich
 -/
+import Lean.Meta.Tactic.Util
 import Lean.Util.ForEachExpr
-import Lean.Elab.Term
+import Lean.Util.OccursCheck
 import Lean.Elab.Tactic.Basic
 
 namespace Lean.Elab.Term
@@ -325,10 +326,24 @@ mutual
   /--
   Try to synthesize a term `val` using the tactic code `tacticCode`, and then assign `mvarId := val`.
   -/
-  partial def runTactic (mvarId : MVarId) (tacticCode : Syntax) : TermElabM Unit := do
+  partial def runTactic (mvarId : MVarId) (tacticCode : Syntax) : TermElabM Unit := withoutAutoBoundImplicit do
     /- Recall, `tacticCode` is the whole `by ...` expression. -/
     let code := tacticCode[1]
     instantiateMVarDeclMVars mvarId
+    /-
+    TODO: consider using `runPendingTacticsAt` at `mvarId` local context and target type.
+    Issue #1380 demonstrates that the goal may still contain pending metavariables.
+    It happens in the following scenario we have a term `foo A (by tac)` where `A` has been postponed
+    and contains nested `by ...` terms. The pending metavar list contains two metavariables: ?m1 (for `A`) and
+    `?m2` (for `by tac`). When `A` is resumed, it creates a new metavariable `?m3` for the nested `by ...` term in `A`.
+    `?m3` is after `?m2` in the to-do list. Then, we execute `by tac` for synthesizing `?m2`, but its type depends on
+    `?m3`. We have considered putting `?m3` at `?m2` place in the to-do list, but this is not super robust.
+    The ideal solution is to make sure a tactic "resolves" all pending metavariables nested in their local contex and target type
+    before starting tactic execution. The procedure would be a generalization of `runPendingTacticsAt`. We can try to combine
+    it with `instantiateMVarDeclMVars` to make sure we do not perform two traversals.
+    Regarding issue #1380, we addressed the issue by avoiding the elaboration postponement step. However, the same issue can happen
+    in more complicated scenarios.
+    -/
     try
       let remainingGoals ← withInfoHole mvarId <| Tactic.run mvarId do
          withTacticInfoContext tacticCode (evalTactic code)

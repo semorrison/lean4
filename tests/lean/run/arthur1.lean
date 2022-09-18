@@ -1,4 +1,4 @@
-import Std
+import Lean.Data.HashMap
 
 inductive NEList (α : Type)
   | uno  : α → NEList α

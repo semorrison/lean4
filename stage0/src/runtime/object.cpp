@@ -19,10 +19,25 @@ Author: Leonardo de Moura
 #include "runtime/flet.h"
 #include "runtime/interrupt.h"
 #include "runtime/buffer.h"
+#include "runtime/io.h"
 
 #ifdef __GLIBC__
 #include <execinfo.h>
 #include <unistd.h>
+#endif
+
+// HACK: for unknown reasons, std::isnan(x) fails on msys64 because math.h
+// is imported and isnan(x) looks like a macro. On the other hand, isnan(x)
+// fails on linux because <cmath> doesn't define it (as expected).
+// So we declare isnan(x) as a macro for std::isnan(x) if it doesn't already exist.
+#ifndef isnan
+#define isnan(x) std::isnan(x)
+#endif
+#ifndef isfinite
+#define isfinite(x) std::isfinite(x)
+#endif
+#ifndef isinf
+#define isinf(x) std::isinf(x)
 #endif
 
 // see `Task.Priority.max`
@@ -67,6 +82,19 @@ extern "C" LEAN_EXPORT void lean_set_panic_messages(bool flag) {
     g_panic_messages = flag;
 }
 
+static void print_backtrace() {
+#ifdef __GLIBC__
+    void * bt_buf[100];
+    int nptrs = backtrace(bt_buf, sizeof(bt_buf) / sizeof(void *));
+    backtrace_symbols_fd(bt_buf, nptrs, STDERR_FILENO);
+    if (nptrs == sizeof(bt_buf)) {
+        std::cerr << "...\n";
+    }
+#else
+    std::cerr << "(stack trace unavailable)\n";
+#endif
+}
+
 extern "C" LEAN_EXPORT object * lean_panic_fn(object * default_val, object * msg) {
     // TODO(Leo, Kha): add thread local buffer for interpreter.
     if (g_panic_messages) {
@@ -75,12 +103,7 @@ extern "C" LEAN_EXPORT object * lean_panic_fn(object * default_val, object * msg
         char * bt_env = getenv("LEAN_BACKTRACE");
         if (!bt_env || strcmp(bt_env, "0") != 0) {
             std::cerr << "backtrace:\n";
-            void * bt_buf[100];
-            int nptrs = backtrace(bt_buf, sizeof(bt_buf));
-            backtrace_symbols_fd(bt_buf, nptrs, STDERR_FILENO);
-            if (nptrs == sizeof(bt_buf)) {
-                std::cerr << "...\n";
-            }
+            print_backtrace();
         }
 #endif
     }
@@ -687,20 +710,24 @@ class task_manager {
             lock.lock();
         } else if (v != nullptr) {
             lean_assert(t->m_imp->m_closure == nullptr);
-            handle_finished(t);
-            mark_mt(v);
-            t->m_value = v;
-            /* After the task has been finished and we propagated
-               dependecies, we can release `m_imp` and keep just the value */
-            free_task_imp(t->m_imp);
-            t->m_imp   = nullptr;
-            m_task_finished_cv.notify_all();
+            resolve_core(t, v);
         } else {
             // `bind` task has not finished yet, re-add as dependency of nested task
             lock.unlock();
             add_dep(lean_to_task(closure_arg_cptr(t->m_imp->m_closure)[0]), t);
             lock.lock();
         }
+    }
+
+    void resolve_core(lean_task_object * t, object * v) {
+        handle_finished(t);
+        mark_mt(v);
+        t->m_value = v;
+        /* After the task has been finished and we propagated
+           dependecies, we can release `m_imp` and keep just the value */
+        free_task_imp(t->m_imp);
+        t->m_imp   = nullptr;
+        m_task_finished_cv.notify_all();
     }
 
     void handle_finished(lean_task_object * t) {
@@ -747,6 +774,15 @@ public:
     void enqueue(lean_task_object * t) {
         unique_lock<mutex> lock(m_mutex);
         enqueue_core(t);
+    }
+
+    void resolve(lean_task_object * t, object * v) {
+        unique_lock<mutex> lock(m_mutex);
+        if (t->m_value) {
+            dec(v);
+            return;
+        }
+        resolve_core(t, v);
     }
 
     void add_dep(lean_task_object * t1, lean_task_object * t2) {
@@ -990,6 +1026,23 @@ extern "C" LEAN_EXPORT b_obj_res lean_io_wait_any_core(b_obj_arg task_list) {
     return g_task_manager->wait_any(task_list);
 }
 
+extern "C" LEAN_EXPORT obj_res lean_io_promise_new(obj_arg) {
+    lean_always_assert(g_task_manager);
+    bool keep_alive = false;
+    unsigned prio = 0;
+    object * closure = nullptr;
+    lean_task_object * o = (lean_task_object*)lean_alloc_small_object(sizeof(lean_task_object));
+    lean_set_task_header((lean_object*)o);
+    o->m_value = nullptr;
+    o->m_imp   = alloc_task_imp(closure, prio, keep_alive);
+    return io_result_mk_ok((lean_object *) o);
+}
+
+extern "C" LEAN_EXPORT obj_res lean_io_promise_resolve(obj_arg value, b_obj_arg promise, obj_arg) {
+    g_task_manager->resolve(lean_to_task(promise), value);
+    return io_result_mk_ok(box(0));
+}
+
 // =======================================
 // Natural numbers
 
@@ -1112,7 +1165,7 @@ extern "C" LEAN_EXPORT object * lean_nat_big_mod(object * a1, object * a2) {
             lean_inc(a1);
             return a1;
         } else {
-            return lean_box((mpz_value(a1) % mpz::of_size_t(n2)).get_unsigned_int());
+            return mpz_to_nat(mpz_value(a1) % mpz::of_size_t(n2));
         }
     } else {
         lean_assert(mpz_value(a2) != 0);
@@ -1454,7 +1507,12 @@ extern "C" LEAN_EXPORT usize lean_usize_mix_hash(usize a1, usize a2) {
 // Float
 
 extern "C" LEAN_EXPORT lean_obj_res lean_float_to_string(double a) {
-    return mk_string(std::to_string(a));
+    if (isnan(a))
+        // override NaN because we don't want NaNs to be distinguishable
+        // because the sign bit / payload bits can be architecture-dependent
+        return mk_string("NaN");
+    else
+        return mk_string(std::to_string(a));
 }
 
 extern "C" LEAN_EXPORT double lean_float_scaleb(double a, b_lean_obj_arg b) {
@@ -1465,6 +1523,17 @@ extern "C" LEAN_EXPORT double lean_float_scaleb(double a, b_lean_obj_arg b) {
    } else {
      return a * (1.0 / 0.0);
    }
+}
+
+extern "C" LEAN_EXPORT uint8_t lean_float_isnan(double a) { return (bool) isnan(a); }
+extern "C" LEAN_EXPORT uint8_t lean_float_isfinite(double a) { return (bool) isfinite(a); }
+extern "C" LEAN_EXPORT uint8_t lean_float_isinf(double a) { return (bool) isinf(a); }
+extern "C" LEAN_EXPORT obj_res lean_float_frexp(double a) {
+    object* r = lean_alloc_ctor(0, 2, 0);
+    int exp;
+    lean_ctor_set(r, 0, lean_box_float(frexp(a, &exp)));
+    lean_ctor_set(r, 1, isfinite(a) ? lean_int_to_int(exp) : lean_box(0));
+    return r;
 }
 
 // =======================================
@@ -2133,6 +2202,11 @@ extern "C" LEAN_EXPORT object * lean_dbg_trace_if_shared(obj_arg s, obj_arg a) {
         io_eprintln(mk_string(std::string("shared RC ") + lean_string_cstr(s)));
     }
     return a;
+}
+
+extern "C" LEAN_EXPORT object * lean_dbg_stack_trace(obj_arg fn) {
+    print_backtrace();
+    return lean_apply_1(fn, lean_box(0));
 }
 
 // =======================================

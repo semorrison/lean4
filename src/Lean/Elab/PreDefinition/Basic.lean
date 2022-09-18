@@ -3,11 +3,9 @@ Copyright (c) 2020 Microsoft Corporation. All rights reserved.
 Released under Apache 2.0 license as described in the file LICENSE.
 Authors: Leonardo de Moura
 -/
-import Lean.Util.SCC
 import Lean.Compiler.NoncomputableAttr
+import Lean.Util.CollectLevelParams
 import Lean.Meta.AbstractNestedProofs
-import Lean.Meta.Transform
-import Lean.Elab.Term
 import Lean.Elab.RecAppSyntax
 import Lean.Elab.DefView
 
@@ -33,12 +31,9 @@ def instantiateMVarsAtPreDecls (preDefs : Array PreDefinition) : TermElabM (Arra
   preDefs.mapM fun preDef => do
     pure { preDef with type := (← instantiateMVars preDef.type), value := (← instantiateMVars preDef.value) }
 
-private def levelMVarToParamPreDeclsAux (preDefs : Array PreDefinition) : StateRefT Nat TermElabM (Array PreDefinition) :=
-  preDefs.mapM fun preDef => do
-    pure { preDef with type := (← levelMVarToParam' preDef.type), value := (← levelMVarToParam' preDef.value) }
-
 def levelMVarToParamPreDecls (preDefs : Array PreDefinition) : TermElabM (Array PreDefinition) :=
-  (levelMVarToParamPreDeclsAux preDefs).run' 1
+  preDefs.mapM fun preDef => do
+    pure { preDef with type := (← levelMVarToParam preDef.type), value := (← levelMVarToParam preDef.value) }
 
 private def getLevelParamsPreDecls (preDefs : Array PreDefinition) (scopeLevelNames allUserLevelNames : List Name) : TermElabM (List Name) := do
   let mut s : CollectLevelParams.State := {}
