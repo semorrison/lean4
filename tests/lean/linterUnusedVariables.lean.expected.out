@@ -1,5 +1,5 @@
-linterUnusedVariables.lean:17:6-17:7: warning: unused variable `y` [linter.unusedVariables]
 linterUnusedVariables.lean:16:21-16:22: warning: unused variable `x` [linter.unusedVariables]
+linterUnusedVariables.lean:17:6-17:7: warning: unused variable `y` [linter.unusedVariables]
 linterUnusedVariables.lean:22:8-22:9: warning: unused variable `x` [linter.unusedVariables]
 linterUnusedVariables.lean:29:2-29:3: warning: unused variable `x` [linter.unusedVariables]
 linterUnusedVariables.lean:34:5-34:6: warning: unused variable `x` [linter.unusedVariables]

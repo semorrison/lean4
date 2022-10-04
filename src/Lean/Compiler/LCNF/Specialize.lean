@@ -10,11 +10,12 @@ import Lean.Compiler.LCNF.SpecInfo
 import Lean.Compiler.LCNF.PrettyPrinter
 import Lean.Compiler.LCNF.ToExpr
 import Lean.Compiler.LCNF.Level
+import Lean.Compiler.LCNF.PhaseExt
 
 namespace Lean.Compiler.LCNF
 namespace Specialize
 
-abbrev Cache := Std.PHashMap Expr Name
+abbrev Cache := PHashMap Expr Name
 
 builtin_initialize specCacheExt : EnvExtension Cache ←
   registerEnvExtension (pure {})
@@ -294,9 +295,19 @@ Specialize `decl` using
 -/
 def mkSpecDecl (decl : Decl) (us : List Level) (argMask : Array (Option Expr)) (params : Array Param) (decls : Array CodeDecl) (levelParamsNew : List Name) : SpecializeM Decl := do
   let nameNew := decl.name ++ `_at_ ++ (← read).declName ++ (`spec).appendIndexAfter (← get).decls.size
-  go nameNew |>.run' {}
+  /-
+  Recall that we have just retrieved `decl` using `getDecl?`, and it may have free variable identifiers that overlap with the free-variables
+  in `params` and `decls` (i.e., the "closure").
+  Recall that `params` and `decls` are internalized, but `decl` is not.
+  Thus, we internalize `decl` before glueing these "pieces" together. We erase the internalized information after we are done.
+  -/
+  let decl ← decl.internalize
+  try
+    go decl nameNew |>.run' {}
+  finally
+    eraseDecl decl
 where
-  go (nameNew : Name) : InternalizeM Decl := do
+  go (decl : Decl) (nameNew : Name) : InternalizeM Decl := do
     let mut params ← params.mapM internalizeParam
     let decls ← decls.mapM internalizeCodeDecl
     for param in decl.params, arg in argMask do
@@ -315,7 +326,9 @@ where
     let value := attachCodeDecls decls value
     let type ← value.inferType
     let type ← mkForallParams params type
-    let decl := { name := nameNew, levelParams := levelParamsNew, params, type, value : Decl }
+    let safe := decl.safe
+    let recursive := decl.recursive
+    let decl := { name := nameNew, levelParams := levelParamsNew, params, type, value, safe, recursive : Decl }
     return decl.setLevelParams
 
 /--
@@ -342,7 +355,7 @@ mutual
     let some paramsInfo ← getSpecParamInfo? declName | return none
     let args := e.getAppArgs
     unless (← shouldSpecialize paramsInfo args) do return none
-    let some decl ← getStage1Decl? declName | return none
+    let some decl ← getDecl? declName | return none
     trace[Compiler.specialize.candidate] "{e}, {paramsInfo}"
     let (argMask, { params, decls, .. }) ← Collector.collect paramsInfo args |>.run {}
     let keyBody := mkAppN f (argMask.filterMap id)
@@ -359,9 +372,10 @@ mutual
       let specDecl ← mkSpecDecl decl us argMask params decls levelParamsNew
       trace[Compiler.specialize.step] "new: {specDecl.name}"
       cacheSpec key specDecl.name
+      specDecl.saveBase
       let specDecl ← specDecl.etaExpand
-      saveLCNFType specDecl.name specDecl.type
-      let specDecl ← specDecl.simp {} -- TODO: `simp` config
+      specDecl.saveBase
+      let specDecl ← specDecl.simp {}
       let specDecl ← specDecl.simp { etaPoly := true, inlinePartial := true, implementedBy := true }
       let value ← withReader (fun _ => { declName := specDecl.name }) do
          withParams specDecl.params <| visitCode specDecl.value
@@ -396,7 +410,7 @@ mutual
 end
 
 def main (decl : Decl) : SpecializeM Decl := do
-  if (← isTemplateLike decl) then
+  if (← decl.isTemplateLike) then
     return decl
   else
     let value ← withParams decl.params <| visitCode decl.value

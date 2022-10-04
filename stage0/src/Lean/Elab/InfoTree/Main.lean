@@ -6,11 +6,7 @@ Authors: Wojciech Nawrocki, Leonardo de Moura, Sebastian Ullrich
 -/
 import Lean.Meta.PPGoal
 
-namespace Lean.Elab
-
-open Std (PersistentArray PersistentArray.empty PersistentHashMap)
-
-namespace ContextInfo
+namespace Lean.Elab.ContextInfo
 
 variable [Monad m] [MonadEnv m] [MonadMCtx m] [MonadOptions m] [MonadResolveName m] [MonadNameGenerator m]
 
@@ -194,17 +190,17 @@ def Info.updateContext? : Option ContextInfo → Info → Option ContextInfo
 
 partial def InfoTree.format (tree : InfoTree) (ctx? : Option ContextInfo := none) : IO Format := do
   match tree with
-  | hole id     => return toString id.name
+  | hole id     => return .nestD f!"• ?{toString id.name}"
   | context i t => format t i
   | node i cs   => match ctx? with
-    | none => return "<context-not-available>"
+    | none => return "• <context-not-available>"
     | some ctx =>
       let fmt ← i.format ctx
       if cs.size == 0 then
-        return fmt
+        return .nestD f!"• {fmt}"
       else
         let ctx? := i.updateContext? ctx?
-        return f!"{fmt}{Std.Format.nestD <| Std.Format.prefixJoin (Std.format "\n") (← cs.toList.mapM fun c => format c ctx?)}"
+        return .nestD f!"• {fmt}{Std.Format.prefixJoin .line (← cs.toList.mapM fun c => format c ctx?)}"
 
 section
 variable [Monad m] [MonadInfoTree m]

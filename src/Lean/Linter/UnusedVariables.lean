@@ -102,7 +102,6 @@ builtin_initialize addBuiltinUnusedVariablesIgnoreFn (fun _ stack opts =>
     (stx.isOfKind ``Lean.Parser.Term.matchAlt && pos == 1) ||
     (stx.isOfKind ``Lean.Parser.Tactic.inductionAltLHS && pos == 2))
 
-
 builtin_initialize unusedVariablesIgnoreFnsExt : SimplePersistentEnvExtension Name Unit ←
   registerSimplePersistentEnvExtension {
     name          := `unusedVariablesIgnoreFns
@@ -186,7 +185,7 @@ def unusedVariables : Linter := fun cmdStx => do
 
   -- collect ignore functions
   let ignoreFns := (← getUnusedVariablesIgnoreFns)
-    |>.insertAt 0 (isTopLevelDecl constDecls)
+    |>.insertAt! 0 (isTopLevelDecl constDecls)
 
   -- determine unused variables
   for (id, ⟨decl?, uses⟩) in vars.toList do

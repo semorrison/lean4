@@ -57,7 +57,7 @@ private def mkPPContext (nCtx : NamingContext) (ctx : MessageDataContext) : PPCo
 
 private inductive EmbedFmt
   /-- Tags denote `Info` objects. -/
-  | expr (ctx : Elab.ContextInfo) (infos : Std.RBMap Nat Elab.Info compare)
+  | expr (ctx : Elab.ContextInfo) (infos : RBMap Nat Elab.Info compare)
   | goal (ctx : Elab.ContextInfo) (lctx : LocalContext) (g : MVarId)
   /-- Some messages (in particular, traces) are too costly to print eagerly. Instead, we allow
   the user to expand sub-traces interactively. -/
@@ -185,6 +185,6 @@ def msgToInteractiveDiagnostic (text : FileMap) (m : Message) (hasWidgets : Bool
       msgToInteractive m.data hasWidgets
     catch ex =>
       pure <| TaggedText.text s!"[error when printing message: {ex.toString}]"
-  pure { range, fullRange, severity?, source?, message, tags? }
+  pure { range, fullRange? := some fullRange, severity?, source?, message, tags? }
 
 end Lean.Widget
