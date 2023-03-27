@@ -137,7 +137,7 @@ theorem Bool.or_assoc (a b c : Bool) : (a || b || c) = (a || (b || c)) := by
 
 @[simp] theorem decide_eq_true_eq [Decidable p] : (decide p = true) = p := propext <| Iff.intro of_decide_eq_true decide_eq_true
 @[simp] theorem decide_not [h : Decidable p] : decide (¬ p) = !decide p := by cases h <;> rfl
-@[simp] theorem not_decide_eq_true [h : Decidable p] : ((!decide p) = true) = ¬ p := by cases h <;> simp [decide, *]
+@[simp] theorem not_decide_eq_true [h : Decidable p] : ((!decide p) = true) = ¬ p := by cases h <;> simp [*] <;> decide
 
 @[simp] theorem heq_eq_eq {α : Sort u} (a b : α) : HEq a b = (a = b) := propext <| Iff.intro eq_of_heq heq_of_eq
 
@@ -151,7 +151,7 @@ theorem Bool.or_assoc (a b c : Bool) : (a || b || c) = (a || (b || c)) := by
 @[simp] theorem bne_self_eq_false' [DecidableEq α] (a : α) : (a != a) = false := by simp [bne]
 
 @[simp] theorem Nat.le_zero_eq (a : Nat) : (a ≤ 0) = (a = 0) :=
-  propext ⟨fun h => Nat.le_antisymm h (Nat.zero_le ..), fun h => by simp [h]⟩
+  propext ⟨fun h => Nat.le_antisymm h (Nat.zero_le ..), fun h => by simp [h] <;> decide⟩
 
 @[simp] theorem decide_False : decide False = false := rfl
 @[simp] theorem decide_True : decide True = true := rfl
