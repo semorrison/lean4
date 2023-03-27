@@ -216,7 +216,7 @@ theorem step_west
   can_escape ⟨s,⟨x+1,y⟩,w⟩ :=
    by have hmm : GameState.mk s ⟨x,y⟩ w = make_move ⟨s,⟨x+1, y⟩,w⟩ Move.west :=
                by have h' : x + 1 - 1 = x := rfl
-                  simp [h', hclear']
+                  simp (config := { decide := true }) [h', hclear']
       rw [hmm] at W
       exact can_still_escape ⟨s,⟨x+1,y⟩,w⟩ Move.west W
 
@@ -242,7 +242,7 @@ theorem step_north
   can_escape ⟨s,⟨x, y+1⟩,w⟩ :=
     by have hmm : GameState.mk s ⟨x,y⟩ w = make_move ⟨s,⟨x, y+1⟩,w⟩ Move.north :=
          by have h' : y + 1 - 1 = y := rfl
-            simp [h', hclear']
+            simp (config := { decide := true }) [h', hclear']
        rw [hmm] at N
        exact can_still_escape ⟨s,⟨x,y+1⟩,w⟩ Move.north N
 
@@ -292,5 +292,5 @@ def maze1 := ┌───┐
 def foo : can_escape maze1 := by
   apply step_west
   set_option trace.Meta.debug true in
-  simp
+  simp (config := { decide := true })
   out

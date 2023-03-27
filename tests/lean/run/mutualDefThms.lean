@@ -49,13 +49,13 @@ theorem listStringLen_append (xs ys : List String) : listStringLen (xs ++ ys) = 
 mutual
   theorem listStringLen_flat (f : Foo) : listStringLen (flat f) = textLength f := by
     match f with
-    | text s => simp [listStringLen]
-    | element cs => simp [listStringLen_flatList cs]
+    | text s => simp (config := { decide := true }) [listStringLen]
+    | element cs => simp (config := { decide := true }) [listStringLen_flatList cs]
 
   theorem listStringLen_flatList (cs : List Foo) : listStringLen (flatList cs) = textLengthList cs := by
     match cs with
-    | [] => simp
-    | f :: fs => simp [listStringLen_append, listStringLen_flatList fs, listStringLen_flat f]
+    | [] => simp (config := { decide := true })
+    | f :: fs => simp (config := { decide := true }) [listStringLen_append, listStringLen_flatList fs, listStringLen_flat f]
 end
 
 end Foo

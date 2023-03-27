@@ -26,8 +26,8 @@ in the list, ignoring delays
 theorem length_toList (l : LazyList α) : l.toList.length = l.length := by
   match l with
   | nil => rfl
-  | cons a as => simp [length_toList as]
-  | delayed as => simp [length_toList as.get]
+  | cons a as => simp (config := { decide := true }) [length_toList as]
+  | delayed as => simp (config := { decide := true }) [length_toList as.get]
 
 def force : LazyList α → Option (α × LazyList α)
   | delayed as => force as.get
@@ -36,8 +36,8 @@ def force : LazyList α → Option (α × LazyList α)
 
 theorem toList_force_none (l : LazyList α) : force l = none ↔ l.toList = List.nil := by
   match l with
-  | nil => simp [force]
-  | delayed as => simp [force, toList_force_none as.get]
-  | cons a as => simp [force, toList_force_none as]
+  | nil => simp (config := { decide := true }) [force]
+  | delayed as => simp (config := { decide := true }) [force, toList_force_none as.get]
+  | cons a as => simp (config := { decide := true }) [force, toList_force_none as]
 
 end LazyList

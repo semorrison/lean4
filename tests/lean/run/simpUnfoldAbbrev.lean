@@ -11,4 +11,4 @@ example (h : good n) : n > 42 := by
 
 example {x y : Nat} (h : x ≠ y) : x ≠ y := by
   -- ≠ is also an abbreviation
-  simp [h]
+  simp (config := { decide := true }) [h]

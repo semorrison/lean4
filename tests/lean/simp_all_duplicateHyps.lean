@@ -9,7 +9,7 @@ example (h₁ : ¬ q 0) (h₂ : ¬ q 0) : ¬ p 0 := by
      h₂ : ¬ q 0
      ⊢ ¬ p 0
   -/
-  simp_all
+  simp_all (config := { decide := true })
   /-
      h₂ : ¬ q 0
      ⊢ ¬ p 0

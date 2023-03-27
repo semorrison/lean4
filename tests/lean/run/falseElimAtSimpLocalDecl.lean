@@ -9,4 +9,4 @@ theorem ex2 (h : g x = []) : 0 = 1 := by
   simp [g] at h
 
 theorem ex3 (x : α) (h : id x ≠ x) : 0 = 1 := by
-  simp at h
+  simp (config := { decide := true }) at h

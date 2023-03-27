@@ -15,4 +15,4 @@ theorem ex3 (x y : Nat) (h₁ : f x x = g x) (h₂ : f x x < 5) : f x x + f x x 
   trace_state
   have aux₁ : f x x = g x := h₁
   have aux₂ : g x < 5     := h₂
-  simp [g_ax]
+  simp (config := { decide := true }) [g_ax]

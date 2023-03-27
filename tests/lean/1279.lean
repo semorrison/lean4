@@ -72,7 +72,7 @@ theorem ex_3 : Arrow.compose₁ .id f = f := by
 
 theorem ex_4 : h ≠ .id → Arrow.compose₁ (.comp f g) h = .comp f (.comp g h) := by
   intros
-  cases h <;> simp_all!
+  cases h <;> simp_all! (config := { decide := true })
 
 def Arrow.isId : Arrow dom com → Prop
   | .id => True
@@ -84,4 +84,4 @@ def Arrow.isComp : Arrow dom com → Prop
 
 theorem ex_5 (f : Arrow β γ) (g : Arrow α β) : ¬ f.isId → ¬ g.isId → ¬ f.isComp → Arrow.compose₁ f g = .comp f g := by
   intros
-  cases f <;> cases g <;> simp_all!
+  cases f <;> cases g <;> simp_all! (config := { decide := true })

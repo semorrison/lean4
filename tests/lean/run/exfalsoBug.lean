@@ -44,7 +44,7 @@ def f' (n : Nat) : Option { r : Nat // r ≤ n } :=
 
 theorem f'_ne_none (n : Nat) : f' n ≠ none := by
   match n with
-  | 0   => simp [f']
+  | 0   => simp (config := { decide := true }) [f']
   | n+1 =>
     simp [f']
     have ih₁ := f'_ne_none n
@@ -53,7 +53,7 @@ theorem f'_ne_none (n : Nat) : f' n ≠ none := by
       have : m < n+1 := Nat.lt_of_le_of_lt h₁ (Nat.lt_succ_self _)
       have ih₂ := f'_ne_none m
       split
-      next => simp
+      next => simp (config := { decide := true })
       next h => contradiction
     next => contradiction
 
@@ -80,9 +80,9 @@ theorem f_eq (n : Nat) :
       next n _ =>
        have : Nat.succ n - 1 = n := rfl
        rw [this]
-       split <;> simp
+       split <;> simp (config := { decide := true })
        next r hrn h₁ =>
-         split <;> simp
+         split <;> simp (config := { decide := true })
          next => intro he; subst he; simp [*]
   next h_eq_none =>
     have hne := f'_ne_none n

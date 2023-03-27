@@ -32,10 +32,10 @@ end
 
 theorem length_treeToList_eq_numNames (t : TreeNode) : (treeToList t).length = numNames t := by
   match t with
-  | .mkLeaf .. => simp [treeToList, numNames]
+  | .mkLeaf .. => simp (config := { decide := true }) [treeToList, numNames]
   | .mkNode _ cs => simp_arith [numNames, helper cs]
 where
   helper (cs : List TreeNode) : (cs.map treeToList).join.length = numNamesLst cs := by
     match cs with
     | [] => rfl
-    | c::cs' => simp [List.join, List.map, numNamesLst, length_treeToList_eq_numNames c, helper cs']
+    | c::cs' => simp (config := { decide := true }) [List.join, List.map, numNamesLst, length_treeToList_eq_numNames c, helper cs']

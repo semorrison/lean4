@@ -142,19 +142,19 @@ def State.get (σ : State) (x : Var) : Val :=
 
 @[simp] theorem State.find?_update_self (σ : State) (x : Var) (v : Val) : (σ.update x v).find? x = some v := by
   match σ with -- TODO: automate this proof
-  | [] => simp
+  | [] => simp (config := { decide := true })
   | (y, w) :: s =>
     simp
-    split <;> simp [*]
+    split <;> simp (config := { decide := true }) [*]
     apply find?_update_self
 
 @[simp] theorem State.find?_update (σ : State) (v : Val) (h : x ≠ z) : (σ.update x v).find? z = σ.find? z := by
   match σ with -- TODO: automate this proof
-  | [] => simp [h.symm]
+  | [] => simp (config := { decide := true }) [h.symm]
   | (y, w) :: σ =>
     simp
     split <;> simp [*]
-    next hc => split <;> simp_all
+    next hc => split <;> simp_all (config := { decide := true })
     next =>
       split
       next => rfl
@@ -169,7 +169,7 @@ theorem State.get_of_find? {σ : State} (h : σ.find? x = some v) : σ.get x = v
 
 @[simp] theorem State.find?_erase_self (σ : State) (x : Var) : (σ.erase x).find? x = none := by
   match σ with
-  | [] => simp
+  | [] => simp (config := { decide := true })
   | (y, w) :: σ =>
     simp
     split <;> simp [*]
@@ -178,7 +178,7 @@ theorem State.get_of_find? {σ : State} (h : σ.find? x = some v) : σ.get x = v
 
 @[simp] theorem State.find?_erase (σ : State) (h : x ≠ z) : (σ.erase x).find? z = σ.find? z := by
   match σ with
-  | [] => simp
+  | [] => simp (config := { decide := true })
   | (y, w) :: σ =>
     simp
     split <;> simp [*]
@@ -379,7 +379,7 @@ theorem Stmt.simplify_correct (h : (σ, s) ⇓ σ') : (σ, s.simplify) ⇓ σ' :
 
 def State.length_erase_le (σ : State) (x : Var) : (σ.erase x).length ≤ σ.length := by
   match σ with
-  | [] => simp
+  | [] => simp (config := { decide := true })
   | (y, v) :: σ =>
     by_cases hxy : x = y <;> simp [hxy]
     next => exact Nat.le_trans (length_erase_le σ y) (by simp_arith)
@@ -431,7 +431,7 @@ theorem State.bot_le (σ : State) : ⊥ ≼ σ :=
 
 theorem State.erase_le_cons (h : σ' ≼ σ) : σ'.erase x ≼ ((x, v) :: σ) := by
   intro y w hf'
-  by_cases hyx : y = x <;> simp [*] at hf' |-
+  by_cases hyx : y = x <;> simp (config := { decide := true }) [*] at hf' |-
   exact h hf'
 
 theorem State.cons_le_cons (h : σ' ≼ σ) : (x, v) :: σ' ≼ (x, v) :: σ := by
@@ -482,7 +482,7 @@ theorem State.join_le_right (σ₁ σ₂ : State) : σ₁.join σ₂ ≼ σ₂ :
     have ih := join_le_right (erase σ₁ x) σ₂
     split
     next y w h =>
-      split <;> simp [*]
+      split <;> simp (config := { decide := true }) [*]
       next => apply cons_le_of_eq ih h
     next h => assumption
 termination_by _ σ₁ _ => σ₁.length
@@ -492,7 +492,7 @@ theorem State.join_le_right_of (h : σ₁ ≼ σ₂) (σ₃ : State) : σ₃.joi
 
 theorem State.eq_bot (h : σ ≼ ⊥) : σ = ⊥ := by
   match σ with
-  | [] => simp
+  | [] => simp (config := { decide := true })
   | (y, v) :: σ =>
     have : State.find? ((y, v) :: σ) y = some v := by simp
     have := h this
@@ -500,14 +500,14 @@ theorem State.eq_bot (h : σ ≼ ⊥) : σ = ⊥ := by
 
 theorem State.erase_le_of_le_cons (h : σ' ≼ (x, v) :: σ) : σ'.erase x ≼ σ := by
   intro y w hf'
-  by_cases hxy : x = y <;> simp [*] at hf'
+  by_cases hxy : x = y <;> simp (config := { decide := true }) [*] at hf'
   have hf := h hf'
   simp [hxy, Ne.symm hxy] at hf
   assumption
 
 theorem State.erase_le_update (h : σ' ≼ σ) : σ'.erase x ≼ σ.update x v := by
   intro y w hf'
-  by_cases hxy : x = y <;> simp [*] at hf' |-
+  by_cases hxy : x = y <;> simp (config := { decide := true }) [*] at hf' |-
   exact h hf'
 
 theorem State.update_le_update (h : σ' ≼ σ) : σ'.update x v ≼ σ.update x v := by
@@ -519,14 +519,14 @@ theorem State.update_le_update (h : σ' ≼ σ) : σ'.update x v ≼ σ.update x
     have : σ'.erase z ≼ σ := erase_le_of_le_cons h
     have ih := ih this
     revert ih hf
-    split <;> simp [*] <;> by_cases hyz : y = z <;> simp (config := { contextual := true }) [*]
+    split <;> simp [*] <;> by_cases hyz : y = z <;> simp (config := { contextual := true, decide := true }) [*]
     next =>
       intro he'
       have he := h he'
       simp [*] at he
       assumption
     next =>
-      by_cases hxy : x = y <;> simp [*]
+      by_cases hxy : x = y <;> simp (config := { decide := true }) [*]
       next => intros; assumption
       next =>
         intro he' ih

@@ -24,4 +24,4 @@ def grow : ArrayBuffer α → ArrayBuffer α :=
        simp
        trace_state
        have : i < cap := Nat.lt_of_lt_le h h_size
-       simp [*]⟩
+       simp (config := { decide := true }) [*]⟩

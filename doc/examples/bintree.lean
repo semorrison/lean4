@@ -192,7 +192,7 @@ useful if `e` is the condition of an `if`-statement.
 -/
 /-- `by_cases' e` is a shorthand form `by_cases e <;> simp[*]` -/
 local macro "by_cases' " e:term :  tactic =>
-  `(tactic| by_cases $e <;> simp [*])
+  `(tactic| by_cases $e <;> simp (config := { decide := true }) [*])
 
 
 /-!
@@ -270,7 +270,7 @@ theorem BinTree.find_mk (k : Nat)
 theorem BinTree.find_insert (b : BinTree β) (k : Nat) (v : β)
         : (b.insert k v).find? k = some v := by
   let ⟨t, h⟩ := b; simp
-  induction t with simp
+  induction t with simp (config := { decide := true })
   | node left key value right ihl ihr =>
     by_cases' k < key
     . cases h; apply ihl; assumption
@@ -282,7 +282,7 @@ theorem BinTree.find_insert_of_ne (b : BinTree β) (h : k ≠ k') (v : β)
   let ⟨t, h⟩ := b; simp
   induction t with simp
   | leaf =>
-    split <;> simp <;> split <;> simp
+    split <;> simp (config := { decide := true }) <;> split <;> simp (config := { decide := true })
     have_eq k k'
     contradiction
   | node left key value right ihl ihr =>

@@ -48,7 +48,7 @@ Note that we use `(by simp)` to prove that `a₂ :: as ≠ []` in the recursive 
 -/
 def List.last : (as : List α) → as ≠ [] → α
   | [a],         _ => a
-  | _::a₂:: as, _ => (a₂::as).last (by simp)
+  | _::a₂:: as, _ => (a₂::as).last (by simp (config := { decide := true }))
 
 /-!
 We use the function `List.last` to prove the following theorem that says that if a list `as` is not empty,
@@ -58,10 +58,10 @@ We use the attribute `@[simp]` to instruct the `simp` tactic to use this theorem
 @[simp] theorem List.dropLast_append_last (h : as ≠ []) : as.dropLast ++ [as.last h] = as := by
   match as with
   | [] => contradiction
-  | [a] => simp_all [last, dropLast]
+  | [a] => simp_all (config := { decide := true }) [last, dropLast]
   | a₁ :: a₂ :: as =>
     simp [last, dropLast]
-    exact dropLast_append_last (as := a₂ :: as) (by simp)
+    exact dropLast_append_last (as := a₂ :: as) (by simp (config := { decide := true }))
 
 /-!
 We now define the following auxiliary induction principle for lists using well-founded recursion on `as.length`.
@@ -80,7 +80,7 @@ theorem List.palindrome_ind (motive : List α → Prop)
   | [a] => h₂ a
   | a₁::a₂::as' =>
     have ih := palindrome_ind motive h₁ h₂ h₃ (a₂::as').dropLast
-    have : [a₁] ++ (a₂::as').dropLast ++ [(a₂::as').last (by simp)] = a₁::a₂::as' := by simp
+    have : [a₁] ++ (a₂::as').dropLast ++ [(a₂::as').last (by simp (config := { decide := true }))] = a₁::a₂::as' := by simp
     this ▸ h₃ _ _ _ ih
 termination_by _ as => as.length
 

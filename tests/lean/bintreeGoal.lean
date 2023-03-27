@@ -60,7 +60,7 @@ attribute [local simp]
 theorem BinTree.find_insert (b : BinTree β) (k : Nat) (v : β)
         : (b.insert k v).find? k = some v := by
   let ⟨t, h⟩ := b; simp
-  induction t with simp
+  induction t with simp (config := { decide := true })
   | node left key value right ihl ihr =>
     by_cases k < key <;> simp [*]
     . cases h; apply ihl; done

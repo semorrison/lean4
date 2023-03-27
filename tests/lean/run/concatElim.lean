@@ -20,7 +20,7 @@ theorem concatEq (xs : List α) (h : xs ≠ []) : concat (dropLast xs) (last xs 
   match xs, h with
   | [],  h        => contradiction
   | [x], h        => rfl
-  | x₁::x₂::xs, h => simp [concat, last, concatEq (x₂::xs) List.noConfusion]
+  | x₁::x₂::xs, h => simp (config := { decide := true }) [concat, last, concatEq (x₂::xs) List.noConfusion]
 
 theorem lengthCons {α} (x : α) (xs : List α) : (x::xs).length = xs.length + 1 :=
   rfl
@@ -47,7 +47,7 @@ theorem dropLastLen {α} (xs : List α) : (n : Nat) → xs.length = n+1 → (dro
     | succ n =>
       have : (x₁ :: x₂ :: xs).length = xs.length + 2 := by simp [lengthCons]
       have : xs.length = n := by rw [this] at h; injection h with h; injection h
-      simp [dropLast, lengthCons, dropLastLen (x₂::xs) xs.length (lengthCons ..), this]
+      simp (config := { decide := true }) [dropLast, lengthCons, dropLastLen (x₂::xs) xs.length (lengthCons ..), this]
 
 @[inline]
 def concatElim {α}

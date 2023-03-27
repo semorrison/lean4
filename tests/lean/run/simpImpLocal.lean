@@ -4,4 +4,4 @@ theorem ex [Add α]
             (f : α → α) (x y z : α) : f (x + (y + z)) = f (y + (x + z)) := by
   let leftAssoc {a b c : α} : a + (b + c) = b + (a + c) := by
     rw [← assoc, comm (a := a), assoc]
-  simp [leftAssoc]
+  simp (config := { decide := true }) [leftAssoc]

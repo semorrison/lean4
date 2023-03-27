@@ -81,7 +81,7 @@ decreasing_by
   simp_wf
   have := splitList_length (fst ++ snd) (by simp_arith [h₁]) h₁
   subst h₂
-  simp_arith [eq_of_heq h₃] at this |- ; simp [this]
+  simp_arith [eq_of_heq h₃] at this |- ; simp (config := { decide := true }) [this]
 
 theorem len_nil : len ([] : List α) = 0 := by
   simp [len]
