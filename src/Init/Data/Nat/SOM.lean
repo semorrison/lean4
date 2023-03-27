@@ -103,8 +103,8 @@ def Expr.toPoly : Expr → Poly
 
 theorem Mon.append_denote (ctx : Context) (m₁ m₂ : Mon) : (m₁ ++ m₂).denote ctx = m₁.denote ctx * m₂.denote ctx := by
   match m₁ with
-  | [] => simp! [Nat.one_mul]
-  | v :: m₁ => simp! [append_denote ctx m₁ m₂, Nat.mul_assoc]
+  | [] => simp! (config := { decide := true }) [Nat.one_mul]
+  | v :: m₁ => simp! (config := { decide := true }) [append_denote ctx m₁ m₂, Nat.mul_assoc]
 
 theorem Mon.mul_denote (ctx : Context) (m₁ m₂ : Mon) : (m₁.mul m₂).denote ctx = m₁.denote ctx * m₂.denote ctx :=
   go hugeFuel m₁ m₂
@@ -121,8 +121,8 @@ where
 
 theorem Poly.append_denote (ctx : Context) (p₁ p₂ : Poly) : (p₁ ++ p₂).denote ctx = p₁.denote ctx + p₂.denote ctx := by
   match p₁ with
-  | [] => simp!
-  | v :: p₁ => simp! [append_denote _ p₁ p₂, Nat.add_assoc]
+  | [] => simp! (config := { decide := true })
+  | v :: p₁ => simp! (config := { decide := true }) [append_denote _ p₁ p₂, Nat.add_assoc]
 
 theorem Poly.add_denote (ctx : Context) (p₁ p₂ : Poly) : (p₁.add p₂).denote ctx = p₁.denote ctx + p₂.denote ctx :=
   go hugeFuel p₁ p₂
@@ -144,27 +144,27 @@ where
 
 theorem Poly.denote_insertSorted (ctx : Context) (k : Nat) (m : Mon) (p : Poly) : (p.insertSorted k m).denote ctx = p.denote ctx + k * m.denote ctx := by
   match p with
-  | [] => simp!
+  | [] => simp! (config := { decide := true })
   | (k', m') :: p =>
-    by_cases h : m < m' <;> simp! [h, denote_insertSorted ctx k m p, Nat.add_assoc, Nat.add_comm, Nat.add_left_comm]
+    by_cases h : m < m' <;> simp! (config := { decide := true }) [h, denote_insertSorted ctx k m p, Nat.add_assoc, Nat.add_comm, Nat.add_left_comm]
 
 theorem Poly.mulMon_denote (ctx : Context) (p : Poly) (k : Nat) (m : Mon) : (p.mulMon k m).denote ctx = p.denote ctx * k * m.denote ctx := by
   simp [mulMon, go]; simp!
 where
   go (p : Poly) (acc : Poly) : (mulMon.go k m p acc).denote ctx = acc.denote ctx + p.denote ctx * k * m.denote ctx := by
    match p with
-   | [] => simp!
+   | [] => simp! (config := { decide := true })
    | (k', m') :: p =>
-     simp! [go p, Nat.left_distrib, denote_insertSorted, Mon.mul_denote, Nat.mul_assoc, Nat.mul_comm, Nat.mul_left_comm, Nat.add_assoc]
+     simp! (config := { decide := true }) [go p, Nat.left_distrib, denote_insertSorted, Mon.mul_denote, Nat.mul_assoc, Nat.mul_comm, Nat.mul_left_comm, Nat.add_assoc]
 
 theorem Poly.mul_denote (ctx : Context) (p₁ p₂ : Poly) : (p₁.mul p₂).denote ctx = p₁.denote ctx * p₂.denote ctx := by
   simp [mul, go]; simp!
 where
   go (p₁ : Poly) (acc : Poly) : (mul.go p₂ p₁ acc).denote ctx = acc.denote ctx + p₁.denote ctx * p₂.denote ctx := by
     match p₁ with
-    | [] => simp!
+    | [] => simp! (config := { decide := true })
     | (k, m) :: p₁ =>
-      simp! [go p₁, Nat.left_distrib, add_denote, mulMon_denote,
+      simp! (config := { decide := true }) [go p₁, Nat.left_distrib, add_denote, mulMon_denote,
              Nat.add_assoc, Nat.add_comm, Nat.add_left_comm,
              Nat.mul_assoc, Nat.mul_comm, Nat.mul_left_comm]
 
