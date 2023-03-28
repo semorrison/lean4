@@ -568,7 +568,7 @@ theorem succ_pred {a : Nat} (h : a ≠ 0) : a.pred.succ = a := by
 
 theorem sub_ne_zero_of_lt : {a b : Nat} → a < b → b - a ≠ 0
   | 0, 0, h      => absurd h (Nat.lt_irrefl 0)
-  | 0, succ b, _ => by simp
+  | 0, succ b, _ => by simp <;> decide
   | succ a, 0, h => absurd h (Nat.not_lt_zero a.succ)
   | succ a, succ b, h => by rw [Nat.succ_sub_succ]; exact sub_ne_zero_of_lt (Nat.lt_of_succ_lt_succ h)
 
@@ -623,7 +623,7 @@ theorem le_add_of_sub_le {a b c : Nat} (h : a - b ≤ c) : a ≤ c + b := by
 @[simp] protected theorem zero_sub (n : Nat) : 0 - n = 0 := by
   induction n with
   | zero => rfl
-  | succ n ih => simp [ih, Nat.sub_succ]
+  | succ n ih => simp [ih, Nat.sub_succ] <;> decide
 
 protected theorem sub_self_add (n m : Nat) : n - (n + m) = 0 := by
   show (n + 0) - (n + m) = 0
