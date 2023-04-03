@@ -646,7 +646,7 @@ private def shouldVisit (e : Expr) : M Bool := do
     modify fun s => { s with visited := s.visited.insert e }
     return true
 
-@[specialize] private partial def dep (pf : FVarId → Bool) (pm : MVarId →  Bool) (e : Expr) : M Bool :=
+@[specialize] private partial def dep (pf : FVarId → Bool) (pm : MVarId →  Bool) (conservative : Bool) (e : Expr) : M Bool :=
   let rec
     visit (e : Expr) : M Bool := do
       if !(← shouldVisit e) then
@@ -680,15 +680,17 @@ private def shouldVisit (e : Expr) : M Bool := do
         | none   =>
           if pm mvarId then
             return true
-          else
+          else if conservative then
             let lctx := (← getMCtx).getDecl mvarId |>.lctx
             return lctx.any fun decl => pf decl.fvarId
+          else
+            return false
       | .fvar fvarId     => return pf fvarId
       | _                    => pure false
   visit e
 
-@[inline] partial def main (pf : FVarId → Bool) (pm : MVarId → Bool) (e : Expr) : M Bool :=
-  if !e.hasFVar && !e.hasMVar then pure false else dep pf pm e
+@[inline] partial def main (pf : FVarId → Bool) (pm : MVarId → Bool) (conservative : Bool) (e : Expr) : M Bool :=
+  if !e.hasFVar && !e.hasMVar then pure false else dep pf pm conservative e
 
 end DependsOn
 
@@ -698,24 +700,24 @@ end DependsOn
   1- If `?m := t`, then we visit `t` looking for `x`
   2- If `?m` is unassigned, then we consider the worst case and check whether `x` is in the local context of `?m`.
      This case is a "may dependency". That is, we may assign a term `t` to `?m` s.t. `t` contains `x`. -/
-@[inline] def findExprDependsOn [Monad m] [MonadMCtx m] (e : Expr) (pf : FVarId → Bool := fun _ => false) (pm : MVarId → Bool := fun _ => false) : m Bool := do
-  let (result, { mctx, .. }) := DependsOn.main pf pm e |>.run { mctx := (← getMCtx) }
+@[inline] def findExprDependsOn [Monad m] [MonadMCtx m] (e : Expr) (pf : FVarId → Bool := fun _ => false) (pm : MVarId → Bool := fun _ => false) (conservative : Bool := true) : m Bool := do
+  let (result, { mctx, .. }) := DependsOn.main pf pm conservative e |>.run { mctx := (← getMCtx) }
   setMCtx mctx
   return result
 
 /--
   Similar to `findExprDependsOn`, but checks the expressions in the given local declaration
   depends on a free variable `x` s.t. `pf x` is `true` or an unassigned metavariable `?m` s.t. `pm ?m` is true. -/
-@[inline] def findLocalDeclDependsOn [Monad m] [MonadMCtx m] (localDecl : LocalDecl) (pf : FVarId → Bool := fun _ => false) (pm : MVarId → Bool := fun _ => false) : m Bool := do
+@[inline] def findLocalDeclDependsOn [Monad m] [MonadMCtx m] (localDecl : LocalDecl) (pf : FVarId → Bool := fun _ => false) (pm : MVarId → Bool := fun _ => false) (conservative : Bool := true) : m Bool := do
   match localDecl with
-  | .cdecl (type := t) ..  => findExprDependsOn t pf pm
+  | .cdecl (type := t) ..  => findExprDependsOn t pf pm conservative
   | .ldecl (type := t) (value := v) .. =>
-    let (result, { mctx, .. }) := (DependsOn.main pf pm t <||> DependsOn.main pf pm v).run { mctx := (← getMCtx) }
+    let (result, { mctx, .. }) := (DependsOn.main pf pm conservative t <||> DependsOn.main pf pm conservative v).run { mctx := (← getMCtx) }
     setMCtx mctx
     return result
 
-def exprDependsOn [Monad m] [MonadMCtx m] (e : Expr) (fvarId : FVarId) : m Bool :=
-  findExprDependsOn e (fvarId == ·)
+def exprDependsOn [Monad m] [MonadMCtx m] (e : Expr) (fvarId : FVarId) (conservative : Bool := true) : m Bool :=
+  findExprDependsOn e (fvarId == ·) (conservative := conservative)
 
 /-- Return true iff `e` depends on the free variable `fvarId` -/
 def dependsOn [Monad m] [MonadMCtx m] (e : Expr) (fvarId : FVarId) : m Bool :=
