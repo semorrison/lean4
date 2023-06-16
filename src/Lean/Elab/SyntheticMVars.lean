@@ -330,6 +330,7 @@ mutual
 
   /-- Try to synthesize the given pending synthetic metavariable. -/
   private partial def synthesizeSyntheticMVar (mvarId : MVarId) (postponeOnError : Bool) (runTactics : Bool) : TermElabM Bool := do
+    if ← mvarId.isAssigned then return true
     let some mvarSyntheticDecl ← getSyntheticMVarDecl? mvarId | return true -- The metavariable has already been synthesized
     withRef mvarSyntheticDecl.stx do
     match mvarSyntheticDecl.kind with
@@ -449,6 +450,10 @@ private partial def withSynthesizeImp {α} (k : TermElabM α) (mayPostpone : Boo
   modify fun s => { s with pendingMVars := [] }
   try
     let a ← k
+    let p := (← get).pendingMVars
+    withTraceNode `Meta.synthInstance (fun _ => return m!"{p}") do
+    withTraceNode `Meta.synthInstance (fun _ => return m!"{← p.mapM MVarId.isAssigned}") do
+    -- withTraceNode `Meta.synthInstance (fun _ => return m!"{← (← get).pendingMVars.mapM MVarId.getType}") do
     synthesizeSyntheticMVars mayPostpone
     if mayPostpone && synthesizeDefault then
       synthesizeUsingDefaultLoop
