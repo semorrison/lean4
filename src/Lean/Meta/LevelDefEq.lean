@@ -84,7 +84,7 @@ mutual
     -- Handle `max u v =?= max v ?_` for `v` a parameter.
     | Level.max u₁ (.param u₂), Level.max (.param v₁) (.mvar v₂) =>
       if u₂ == v₁ then
-        solve u₁ (.mvar v₂)
+        solve (.mvar v₂) u₁
       else
         return LBool.undef
     | _, _ => return LBool.undef
