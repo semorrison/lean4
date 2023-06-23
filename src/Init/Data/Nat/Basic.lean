@@ -329,7 +329,7 @@ attribute [simp] Nat.lt_irrefl
 theorem ne_of_lt {a b : Nat} (h : a < b) : a ≠ b :=
   fun he => absurd (he ▸ h) (Nat.lt_irrefl a)
 
-theorem le_or_eq_or_le_succ {m n : Nat} (h : m ≤ succ n) : m ≤ n ∨ m = succ n :=
+theorem le_or_eq_of_le_succ {m n : Nat} (h : m ≤ succ n) : m ≤ n ∨ m = succ n :=
   Decidable.byCases
     (fun (h' : m = succ n) => Or.inr h')
     (fun (h' : m ≠ succ n) =>
@@ -484,7 +484,7 @@ theorem pow_le_pow_of_le_right {n : Nat} (hx : n > 0) {i : Nat} : ∀ {j}, i ≤
     have : i = 0 := eq_zero_of_le_zero h
     this.symm ▸ Nat.le_refl _
   | succ j, h =>
-    match le_or_eq_or_le_succ h with
+    match le_or_eq_of_le_succ h with
     | Or.inl h => show n^i ≤ n^j * n from
       have : n^i * 1 ≤ n^j * n := Nat.mul_le_mul (pow_le_pow_of_le_right hx h) hx
       Nat.mul_one (n^i) ▸ this
@@ -495,8 +495,6 @@ theorem pos_pow_of_pos {n : Nat} (m : Nat) (h : 0 < n) : 0 < n^m :=
   pow_le_pow_of_le_right h (Nat.zero_le _)
 
 /-! # min/max -/
-
-instance : Min Nat := minOfLe
 
 /--
 `Nat.min a b` is the minimum of `a` and `b`:
@@ -621,6 +619,12 @@ theorem le_add_of_sub_le {a b c : Nat} (h : a - b ≤ c) : a ≤ c + b := by
     rw [Nat.add_comm, ← Nat.add_sub_assoc hge] at hd
     have hd := Nat.eq_add_of_sub_eq (Nat.le_trans hge (Nat.le_add_left ..)) hd
     rw [Nat.add_comm, hd]
+
+protected theorem sub_lt_sub_left : ∀ {k m n : Nat}, k < m → k < n → m - n < m - k
+  | 0, m+1, n+1, _, _ => by rw [Nat.add_sub_add_right]; exact lt_succ_of_le (Nat.sub_le _ _)
+  | k+1, m+1, n+1, h1, h2 => by
+    rw [Nat.add_sub_add_right, Nat.add_sub_add_right]
+    exact Nat.sub_lt_sub_left (Nat.lt_of_succ_lt_succ h1) (Nat.lt_of_succ_lt_succ h2)
 
 @[simp] protected theorem zero_sub (n : Nat) : 0 - n = 0 := by
   induction n with

@@ -313,7 +313,7 @@ theorem Eq.symm {α : Sort u} {a b : α} (h : Eq a b) : Eq b a :=
 /--
 Equality is transitive: if `a = b` and `b = c` then `a = c`.
 
-Because this is in the `Eq` namespace, if you variables or expressions
+Because this is in the `Eq` namespace, if you have variables or expressions
 `h₁ : a = b` and `h₂ : b = c`, you can use `h₁.trans h₂ : a = c` as shorthand
 for `Eq.trans h₁ h₂`.
 
@@ -392,7 +392,7 @@ perform exactly these constructions, and installs this last equation as a
 definitional reduction rule.
 
 Given a type `α` and any binary relation `r` on `α`, `Quot r` is a type. Note
-that `r` is not required to be an equivalance relation. `Quot` is the basic
+that `r` is not required to be an equivalence relation. `Quot` is the basic
 building block used to construct later the type `Quotient`.
 -/
 add_decl_doc Quot
@@ -438,7 +438,7 @@ have all the same properties as `Eq`, because the assumption that the types of
 important non-theorem is the analogue of `congr`: If `HEq f g` and `HEq x y`
 and `f x` and `g y` are well typed it does not follow that `HEq (f x) (g y)`.
 (This does follow if you have `f = g` instead.) However if `a` and `b` have
-the same type then `a = b` and `HEq a b` ae equivalent.
+the same type then `a = b` and `HEq a b` are equivalent.
 -/
 inductive HEq : {α : Sort u} → α → {β : Sort u} → β → Prop where
   /-- Reflexivity of heterogeneous equality. -/
@@ -473,7 +473,7 @@ attribute [unbox] Prod
 
 /--
 Similar to `Prod`, but `α` and `β` can be propositions.
-We use this Type internally to automatically generate the `brecOn` recursor.
+We use this type internally to automatically generate the `brecOn` recursor.
 -/
 structure PProd (α : Sort u) (β : Sort v) where
   /-- The first projection out of a pair. if `p : PProd α β` then `p.1 : α`. -/
@@ -593,6 +593,29 @@ This expresses that in a term like `a ∈ s`, `s` might be a `Set α` or
 the "member" type `α` is determined by looking at the container type.
 -/
 @[reducible] def outParam (α : Sort u) : Sort u := α
+
+/--
+Gadget for marking semi output parameters in type classes.
+
+Semi-output parameters influence the order in which arguments to type class
+instances are processed.  Lean determines an order where all non-(semi-)output
+parameters to the instance argument have to be figured out before attempting to
+synthesize an argument (that is, they do not contain assignable metavariables
+created during TC synthesis). This rules out instances such as `[Mul β] : Add
+α` (because `β` could be anything). Marking a parameter as semi-output is a
+promise that instances of the type class will always fill in a value for that
+parameter.
+
+For example, the `Coe` class is defined as:
+```
+class Coe (α : semiOutParam (Type u)) (β : Type v)
+```
+This means that all `Coe` instances should provide a concrete value for `α`
+(i.e., not an assignable metavariable). An instance like `Coe Nat Int` or `Coe
+α (Option α)` is fine, but `Coe α Nat` is not since it does not provide a value
+for `α`.
+-/
+@[reducible] def semiOutParam (α : Sort u) : Sort u := α
 
 set_option linter.unusedVariables.funArgs false in
 /-- Auxiliary declaration used to implement named patterns like `x@h:p`. -/
@@ -1678,6 +1701,8 @@ instance Nat.decLe (n m : @& Nat) : Decidable (LE.le n m) :=
 instance Nat.decLt (n m : @& Nat) : Decidable (LT.lt n m) :=
   decLe (succ n) m
 
+instance : Min Nat := minOfLe
+
 set_option bootstrap.genMatcherCode false in
 /--
 (Truncated) subtraction of natural numbers. Because natural numbers are not
@@ -2395,7 +2420,7 @@ The `panicCore` definition cannot be specialized since it is an extern.
 When `panic` occurs in monadic code, the `Inhabited α` parameter depends on a
 `[inst : Monad m]` instance. The `inst` parameter will not be eliminated during
 specialization if it occurs inside of a binder (to avoid work duplication), and
-will prevent the the actual monad from being "copied" to the code being specialized.
+will prevent the actual monad from being "copied" to the code being specialized.
 When we reimplement the specializer, we may consider copying `inst` if it also
 occurs outside binders or if it is an instance.
 -/
@@ -2592,6 +2617,22 @@ protected def Array.appendCore {α : Type u}  (as : Array α) (bs : Array α) : 
       (fun _ => as)
   loop bs.size 0 as
 
+/--
+  Returns the slice of `as` from indices `start` to `stop` (exclusive).
+  If `start` is greater or equal to `stop`, the result is empty.
+  If `stop` is greater than the length of `as`, the length is used instead. -/
+-- NOTE: used in the quotation elaborator output
+def Array.extract (as : Array α) (start stop : Nat) : Array α :=
+  let rec loop (i : Nat) (j : Nat) (bs : Array α) : Array α :=
+    dite (LT.lt j as.size)
+      (fun hlt =>
+        match i with
+        | 0           => bs
+        | Nat.succ i' => loop i' (hAdd j 1) (bs.push (as.get ⟨j, hlt⟩)))
+      (fun _ => bs)
+  let sz' := Nat.sub (min stop as.size) start
+  loop sz' start (mkEmpty sz')
+
 /-- Auxiliary definition for `List.toArray`. -/
 @[inline_if_reduce]
 def List.toArrayAux : List α → Array α → Array α
@@ -2740,7 +2781,7 @@ Alternatively, an implementation of [`MonadLayer`] without `layerInvmap` (so far
   [`MonadTrans`]: https://hackage.haskell.org/package/transformers-0.5.5.0/docs/Control-Monad-Trans-Class.html
   [`MonadLayer`]: https://hackage.haskell.org/package/layers-0.1/docs/Control-Monad-Layer.html#t:MonadLayer
 -/
-class MonadLift (m : Type u → Type v) (n : Type u → Type w) where
+class MonadLift (m : semiOutParam (Type u → Type v)) (n : Type u → Type w) where
   /-- Lifts a value from monad `m` into monad `n`. -/
   monadLift : {α : Type u} → m α → n α
 
@@ -2775,7 +2816,7 @@ monad transformers. Alternatively, an implementation of [`MonadTransFunctor`].
   [`MFunctor`]: https://hackage.haskell.org/package/pipes-2.4.0/docs/Control-MFunctor.html
   [`MonadTransFunctor`]: http://duairc.netsoc.ie/layers-docs/Control-Monad-Layer.html#t:MonadTransFunctor
 -/
-class MonadFunctor (m : Type u → Type v) (n : Type u → Type w) where
+class MonadFunctor (m : semiOutParam (Type u → Type v)) (n : Type u → Type w) where
   /-- Lifts a monad morphism `f : {β : Type u} → m β → m β` to
   `monadMap f : {α : Type u} → n α → n α`. -/
   monadMap {α : Type u} : ({β : Type u} → m β → m β) → n α → n α
@@ -2828,7 +2869,7 @@ The `try ... catch e => ...` syntax inside `do` blocks is sugar for the
 
   [`MonadError`]: https://hackage.haskell.org/package/mtl-2.2.2/docs/Control-Monad-Except.html#t:MonadError
 -/
-class MonadExceptOf (ε : Type u) (m : Type v → Type w) where
+class MonadExceptOf (ε : semiOutParam (Type u)) (m : Type v → Type w) where
   /-- `throw : ε → m α` "throws an error" of type `ε` to the nearest enclosing
   catch block. -/
   throw {α : Type v} : ε → m α
@@ -2980,7 +3021,7 @@ class MonadReaderOf (ρ : Type u) (n : Type u → Type u) where
 
   [`MonadReader`]: https://hackage.haskell.org/package/mtl-2.2.2/docs/Control-Monad-Reader-Class.html#t:MonadReader
 -/
-class MonadReaderOf (ρ : Type u) (m : Type u → Type v) where
+class MonadReaderOf (ρ : semiOutParam (Type u)) (m : Type u → Type v) where
   /-- `(← read) : ρ` reads the state out of monad `m`. -/
   read : m ρ
 
@@ -3015,7 +3056,7 @@ function `f : ρ → ρ`. In addition to `ReaderT` itself, this operation lifts
 over most monad transformers, so it allows us to apply `withReader` to monads
 deeper in the stack.
 -/
-class MonadWithReaderOf (ρ : Type u) (m : Type u → Type v) where
+class MonadWithReaderOf (ρ : semiOutParam (Type u)) (m : Type u → Type v) where
   /-- `withReader (f : ρ → ρ) (x : m α) : m α`  runs the inner `x : m α` inside
   a modified context after applying the function `f : ρ → ρ`.-/
   withReader {α : Type u} : (ρ → ρ) → m α → m α
@@ -3051,7 +3092,7 @@ we use overlapping instances to derive instances automatically from `monadLift`.
 
   [`MonadState`]: https://hackage.haskell.org/package/mtl-2.2.2/docs/Control-Monad-State-Class.html
 -/
-class MonadStateOf (σ : Type u) (m : Type u → Type v) where
+class MonadStateOf (σ : semiOutParam (Type u)) (m : Type u → Type v) where
   /-- `(← get) : σ` gets the state out of a monad `m`. -/
   get : m σ
   /-- `set (s : σ)` replaces the state with value `s`. -/
@@ -3337,7 +3378,7 @@ opaque mixHash (u₁ u₂ : UInt64) : UInt64
 instance [Hashable α] {p : α → Prop} : Hashable (Subtype p) where
   hash a := hash a.val
 
-/-- A opaque string hash function. -/
+/-- An opaque string hash function. -/
 @[extern "lean_string_hash"]
 protected opaque String.hash (s : @& String) : UInt64
 
@@ -3560,7 +3601,7 @@ inductive Syntax where
   subexpression corresponding to this node. The parser sets the `info` field
   to `none`.
   The parser sets the `info` field to `none`, with position retrieval continuing recursively.
-  Nodes created by quotatons use the result from `SourceInfo.fromRef` so that they are marked
+  Nodes created by quotations use the result from `SourceInfo.fromRef` so that they are marked
   as synthetic even when the leading/trailing token is not.
   The delaborator uses the `info` field to store the position of the subexpression
   corresponding to this node.
@@ -3638,7 +3679,7 @@ instance : Inhabited Syntax where
 instance : Inhabited (TSyntax ks) where
   default := ⟨default⟩
 
-/-! Builtin kinds -/
+/-! # Builtin kinds -/
 
 /--
 The `choice` kind is used when a piece of syntax has multiple parses, and the
@@ -3681,6 +3722,16 @@ abbrev nameLitKind : SyntaxNodeKind := `name
 abbrev fieldIdxKind : SyntaxNodeKind := `fieldIdx
 
 /--
+`hygieneInfo` is the node kind of the `hygieneInfo` parser, which is an
+"invisible token" which captures the hygiene information at the current point
+without parsing anything.
+
+They can be used to generate identifiers (with `Lean.HygieneInfo.mkIdent`)
+as if they were introduced by the calling context, not the called macro.
+-/
+abbrev hygieneInfoKind : SyntaxNodeKind := `hygieneInfo
+
+/--
 `interpolatedStrLitKind` is the node kind of interpolated string literal
 fragments like `"value = {` and `}"` in `s!"value = {x}"`.
 -/
@@ -3690,6 +3741,15 @@ abbrev interpolatedStrLitKind : SyntaxNodeKind := `interpolatedStrLitKind
 like `"value = {x}"` in `s!"value = {x}"`.
 -/
 abbrev interpolatedStrKind : SyntaxNodeKind := `interpolatedStrKind
+
+/-- Creates an info-less node of the given kind and children. -/
+@[inline] def mkNode (k : SyntaxNodeKind) (args : Array Syntax) : TSyntax (.cons k .nil) :=
+  ⟨Syntax.node SourceInfo.none k args⟩
+
+/-- Creates an info-less `nullKind` node with the given children, if any. -/
+-- NOTE: used by the quotation elaborator output
+@[inline] def mkNullNode (args : Array Syntax := Array.empty) : Syntax :=
+  mkNode nullKind args |>.raw
 
 namespace Syntax
 
@@ -3770,7 +3830,7 @@ def isIdent : Syntax → Bool
   | ident .. => true
   | _        => false
 
-/-- If this is a `ident`, return the parsed value, else `.anonymous`. -/
+/-- If this is an `ident`, return the parsed value, else `.anonymous`. -/
 def getId : Syntax → Name
   | ident _ _ val _ => val
   | _               => Name.anonymous
@@ -4073,7 +4133,7 @@ foo.bla._@.Init.Data.List.Basic._hyg.2.5
 ```
 
 We may have to combine scopes from different files/modules.
-The main modules being processed is always the right most one.
+The main modules being processed is always the right-most one.
 This situation may happen when we execute a macro generated in
 an imported file in the current file.
 ```
@@ -4198,7 +4258,7 @@ def addMacroScope (mainModule : Name) (n : Name) (scp : MacroScope) : Name :=
 
 /--
 Append two names that may have macro scopes. The macro scopes in `b` are always erased.
-If `a` has macro scopes, then the are propagated to result of `append a b`
+If `a` has macro scopes, then they are propagated to the result of `append a b`.
 -/
 def Name.append (a b : Name) : Name :=
   match a.hasMacroScopes, b.hasMacroScopes with
@@ -4338,14 +4398,14 @@ def throwUnsupported {α} : MacroM α :=
   throw Exception.unsupportedSyntax
 
 /--
-Throw a error with the given message,
+Throw an error with the given message,
 using the `ref` for the location information.
 -/
 def throwError {α} (msg : String) : MacroM α :=
   bind getRef fun ref =>
   throw (Exception.error ref msg)
 
-/-- Throw a error with the given message and location information. -/
+/-- Throw an error with the given message and location information. -/
 def throwErrorAt {α} (ref : Syntax) (msg : String) : MacroM α :=
   withRef ref (throwError msg)
 
@@ -4380,7 +4440,7 @@ structure Methods where
   hasDecl           : Name → MacroM Bool
   /-- Resolves the given name to an overload list of namespaces. -/
   resolveNamespace  : Name → MacroM (List Name)
-  /-- Resolves the given name to a overload list of global definitions.
+  /-- Resolves the given name to an overload list of global definitions.
   The `List String` in each alternative is the deduced list of projections
   (which are ambiguous with name components). -/
   resolveGlobalName : Name → MacroM (List (Prod Name (List String)))
@@ -4424,7 +4484,7 @@ def resolveNamespace (n : Name) : MacroM (List Name) := do
   (← getMethods).resolveNamespace n
 
 /--
-Resolves the given name to a overload list of global definitions.
+Resolves the given name to an overload list of global definitions.
 The `List String` in each alternative is the deduced list of projections
 (which are ambiguous with name components).
 -/

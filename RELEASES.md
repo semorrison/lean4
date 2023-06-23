@@ -1,9 +1,46 @@
 Unreleased
 ---------
 
-* [Update Lake to latest prerelease](https://github.com/leanprover/lean4/pull/1879).
+* [New `have this` implementation](https://github.com/leanprover/lean4/pull/2247).
 
-* [Introduce parser memoization to avoid exponentional behavior](https://github.com/leanprover/lean4/pull/1799).
+  `this` is now a regular identifier again that is implicitly introduced by anonymous `have :=` for the remainder of the tactic block. It used to be a keyword that was visible in all scopes and led to unexpected behavior when explicitly used as a binder name.
+
+* [Show typeclass and tactic names in profile output](https://github.com/leanprover/lean4/pull/2170).
+
+* [Make `calc` require the sequence of relation/proof-s to have the same indentation](https://github.com/leanprover/lean4/pull/1844),
+  and [add `calc` alternative syntax allowing underscores `_` in the first relation](https://github.com/leanprover/lean4/pull/1844).
+
+  The flexible indentation in `calc` was often used to align the relation symbols:
+  ```lean
+  example (x y : Nat) : (x + y) * (x + y) = x * x + y * x + x * y + y * y :=
+    calc
+        (x + y) * (x + y) = (x + y) * x + (x + y) * y       := by rw [Nat.mul_add]
+                        -- improper indentation
+                        _ = x * x + y * x + (x + y) * y     := by rw [Nat.add_mul]
+                        _ = x * x + y * x + (x * y + y * y) := by rw [Nat.add_mul]
+                        _ = x * x + y * x + x * y + y * y   := by rw [←Nat.add_assoc]
+  ```
+
+  This is no longer legal.  The new syntax puts the first term right after the `calc` and each step has the same indentation:
+  ```lean
+  example (x y : Nat) : (x + y) * (x + y) = x * x + y * x + x * y + y * y :=
+    calc (x + y) * (x + y)
+      _ = (x + y) * x + (x + y) * y       := by rw [Nat.mul_add]
+      _ = x * x + y * x + (x + y) * y     := by rw [Nat.add_mul]
+      _ = x * x + y * x + (x * y + y * y) := by rw [Nat.add_mul]
+      _ = x * x + y * x + x * y + y * y   := by rw [←Nat.add_assoc]
+  ```
+
+
+* Update Lake to latest prerelease.
+
+* [Make go-to-definition on a typeclass projection application go to the instance(s)](https://github.com/leanprover/lean4/pull/1767).
+
+* [Include timings in trace messages when `profiler` is true](https://github.com/leanprover/lean4/pull/1995).
+
+* [Pretty-print signatures in hover and `#check <ident>`](https://github.com/leanprover/lean4/pull/1943).
+
+* [Introduce parser memoization to avoid exponential behavior](https://github.com/leanprover/lean4/pull/1799).
 
 * [feat: allow `doSeq` in `let x <- e | seq`](https://github.com/leanprover/lean4/pull/1809).
 
@@ -616,7 +653,7 @@ v4.0.0-m5 (07 August 2022)
     ...
   ```
 
-* Remove support for `{}` annotation from inductive datatype contructors. This annotation was barely used, and we can control the binder information for parameter bindings using the new inductive family indices to parameter promotion. Example: the following declaration using `{}`
+* Remove support for `{}` annotation from inductive datatype constructors. This annotation was barely used, and we can control the binder information for parameter bindings using the new inductive family indices to parameter promotion. Example: the following declaration using `{}`
   ```lean
   inductive LE' (n : Nat) : Nat → Prop where
     | refl {} : LE' n n -- Want `n` to be explicit

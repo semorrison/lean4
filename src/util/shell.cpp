@@ -21,6 +21,7 @@ Author: Leonardo de Moura
 #include "runtime/sstream.h"
 #include "runtime/load_dynlib.h"
 #include "runtime/array_ref.h"
+#include "runtime/object_ref.h"
 #include "util/timer.h"
 #include "util/macros.h"
 #include "util/io.h"
@@ -54,10 +55,6 @@ Author: Leonardo de Moura
 #include <windows.h>
 #else
 #include <dlfcn.h>
-#endif
-
-#if defined(LEAN_LLVM)
-#include <llvm/Support/TargetSelect.h>
 #endif
 
 #ifdef _MSC_VER
@@ -173,20 +170,36 @@ using namespace lean; // NOLINT
 #define LEAN_SERVER_DEFAULT_MAX_HEARTBEAT 100000
 #endif
 
+extern "C" void *initialize_Lean_Compiler_IR_EmitLLVM(uint8_t builtin,
+                                                      lean_object *);
+extern "C" object *lean_ir_emit_llvm(object *env, object *mod_name,
+                                     object *filepath, object *target_triple, object *w);
+
 static void display_header(std::ostream & out) {
     out << "Lean (version " << get_version_string() << ", " << LEAN_STR(LEAN_BUILD_TYPE) << ")\n";
+}
+
+static void display_features(std::ostream & out) {
+    out << "[";
+#if defined(LEAN_LLVM)
+    out << "LLVM";
+#endif
+    out << "]\n";
 }
 
 static void display_help(std::ostream & out) {
     display_header(out);
     std::cout << "Miscellaneous:\n";
     std::cout << "  --help -h          display this message\n";
+    std::cout << "  --features -f      display features compiler provides (eg. LLVM support)\n";
     std::cout << "  --version -v       display version number\n";
     std::cout << "  --githash          display the git commit hash number used to build this binary\n";
     std::cout << "  --run              call the 'main' definition in a file with the remaining arguments\n";
     std::cout << "  --o=oname -o       create olean file\n";
     std::cout << "  --i=iname -i       create ilean file\n";
     std::cout << "  --c=fname -c       name of the C output file\n";
+    std::cout << "  --bc=fname -b      name of the LLVM bitcode file\n";
+    std::cout << "  --target=target    target triple of object file produced by LLVM\n";
     std::cout << "  --stdin            take input from stdin\n";
     std::cout << "  --root=dir         set package root directory from which the module name of the input file is calculated\n"
               << "                     (default: current working directory)\n";
@@ -237,6 +250,9 @@ static struct option g_long_options[] = {
     {"deps-json",    no_argument,       0, 'J'},
     {"timeout",      optional_argument, 0, 'T'},
     {"c",            optional_argument, 0, 'c'},
+    {"bc",           optional_argument, 0, 'b'},
+    {"target",       optional_argument, 0, '3'},
+    {"features",     optional_argument, 0, 'f'},
     {"exitOnPanic",  no_argument,       0, 'e'},
 #if defined(LEAN_MULTI_THREAD)
     {"threads",      required_argument, 0, 'j'},
@@ -458,10 +474,6 @@ extern "C" LEAN_EXPORT int lean_main(int argc, char ** argv) {
 #if defined(LEAN_MULTI_THREAD)
     num_threads = hardware_concurrency();
 #endif
-#if defined(LEAN_LLVM)
-    // Initialize LLVM backends for native code generation.
-    llvm::InitializeNativeTarget();
-#endif
 
     try {
         // Remark: This currently runs under `IO.initializing = true`.
@@ -476,6 +488,8 @@ extern "C" LEAN_EXPORT int lean_main(int argc, char ** argv) {
     optional<std::string> server_in;
     std::string native_output;
     optional<std::string> c_output;
+    optional<std::string> llvm_output;
+    optional<std::string> target_triple;
     optional<std::string> root_dir;
     buffer<string_ref> forwarded_args;
 
@@ -502,9 +516,20 @@ extern "C" LEAN_EXPORT int lean_main(int argc, char ** argv) {
             case 'h':
                 display_help(std::cout);
                 return 0;
+            case 'f':
+                display_features(std::cout);
+                return 0;
             case 'c':
                 check_optarg("c");
                 c_output = optarg;
+                break;
+            case 'b':
+                check_optarg("b");
+                llvm_output = optarg;
+                break;
+            case '3':
+                check_optarg("target");
+                target_triple = optarg;
                 break;
             case 's':
                 lean::lthread::set_thread_stack_size(
@@ -725,6 +750,27 @@ extern "C" LEAN_EXPORT int lean_main(int argc, char ** argv) {
             time_task _("C code generation", opts);
             out << lean::ir::emit_c(env, *main_module_name).data();
             out.close();
+        }
+
+        // target triple is only used by the LLVM backend. Save users
+        // a great deal of pain by erroring out if they misuse flags.
+        if (target_triple && !llvm_output) {
+            std::cerr << "ERROR: '--target' must be used with '--bc' to enable LLVM backend. Quitting code generation.\n";
+            return 1;
+        }
+
+        if (llvm_output && ok) {
+	        // marshal 'optional<string>' to 'lean_object*'
+            lean_object* const target_triple_lean =
+                target_triple ? mk_option_some(lean::string_ref(*target_triple).to_obj_arg()) : mk_option_none();
+            initialize_Lean_Compiler_IR_EmitLLVM(/*builtin*/ false,
+                    lean_io_mk_world());
+            time_task _("LLVM code generation", opts);
+            lean::consume_io_result(lean_ir_emit_llvm(
+                        env.to_obj_arg(), (*main_module_name).to_obj_arg(),
+                        lean::string_ref(*llvm_output).to_obj_arg(),
+                        target_triple_lean,
+                        lean_io_mk_world()));
         }
 
         display_cumulative_profiling_times(std::cerr);

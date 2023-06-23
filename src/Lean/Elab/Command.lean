@@ -32,7 +32,7 @@ structure State where
   ngen           : NameGenerator := {}
   infoState      : InfoState := {}
   traceState     : TraceState := {}
-  deriving Inhabited
+  deriving Nonempty
 
 structure Context where
   fileName       : String
@@ -47,7 +47,9 @@ structure Context where
 abbrev CommandElabCoreM (ε) := ReaderT Context $ StateRefT State $ EIO ε
 abbrev CommandElabM := CommandElabCoreM Exception
 abbrev CommandElab  := Syntax → CommandElabM Unit
-abbrev Linter := Syntax → CommandElabM Unit
+structure Linter where
+  run : Syntax → CommandElabM Unit
+  name : Name := by exact decl_name%
 
 /-
 Make the compiler generate specialized `pure`/`bind` so we do not have to optimize through the
@@ -68,6 +70,7 @@ def mkState (env : Environment) (messages : MessageLog := {}) (opts : Options :=
 /- Linters should be loadable as plugins, so store in a global IO ref instead of an attribute managed by the
     environment (which only contains `import`ed objects). -/
 builtin_initialize lintersRef : IO.Ref (Array Linter) ← IO.mkRef #[]
+builtin_initialize registerTraceClass `Elab.lint
 
 def addLinter (l : Linter) : IO Unit := do
   let ls ← lintersRef.get
@@ -157,8 +160,8 @@ def liftCoreM (x : CoreM α) : CommandElabM α := do
   modify fun s => { s with
     env := coreS.env
     ngen := coreS.ngen
-    messages := addTraceAsMessagesCore ctx (s.messages ++ coreS.messages) coreS.traceState
-    traceState := coreS.traceState
+    messages := s.messages ++ coreS.messages
+    traceState.traces := coreS.traceState.traces.map fun t => { t with ref := replaceRef t.ref ctx.ref }
     infoState.trees := s.infoState.trees.append coreS.infoState.trees
   }
   match ea with
@@ -195,17 +198,20 @@ instance : MonadLog CommandElabM where
     let msg := { msg with data := MessageData.withNamingContext { currNamespace := currNamespace, openDecls := openDecls } msg.data }
     modify fun s => { s with messages := s.messages.add msg }
 
-def runLinters (stx : Syntax) : CommandElabM Unit := do profileitM Exception "linting" (← getOptions) do
-  let linters ← lintersRef.get
-  unless linters.isEmpty do
-    for linter in linters do
-      let savedState ← get
-      try
-        linter stx
-      catch ex =>
-        logException ex
-      finally
-        modify fun s => { savedState with messages := s.messages }
+def runLinters (stx : Syntax) : CommandElabM Unit := do
+  profileitM Exception "linting" (← getOptions) do
+    withTraceNode `Elab.lint (fun _ => return m!"running linters") do
+      let linters ← lintersRef.get
+      unless linters.isEmpty do
+        for linter in linters do
+          withTraceNode `Elab.lint (fun _ => return m!"running linter: {linter.name}") do
+            let savedState ← get
+            try
+              linter.run stx
+            catch ex =>
+              logException ex
+            finally
+              modify fun s => { savedState with messages := s.messages }
 
 protected def getCurrMacroScope : CommandElabM Nat  := do pure (← read).currMacroScope
 protected def getMainModule     : CommandElabM Name := do pure (← getEnv).mainModule
@@ -274,8 +280,7 @@ partial def elabCommand (stx : Syntax) : CommandElabM Unit := do
         -- list of commands => elaborate in order
         -- The parser will only ever return a single command at a time, but syntax quotations can return multiple ones
         args.forM elabCommand
-      else do
-        trace `Elab.command fun _ => stx;
+      else withTraceNode `Elab.command (fun _ => return stx) do
         let s ← get
         match (← liftMacroM <| expandMacroImpl? s.env stx) with
         | some (decl, stxNew?) =>
@@ -289,7 +294,9 @@ partial def elabCommand (stx : Syntax) : CommandElabM Unit := do
             withInfoTreeContext (mkInfoTree := mkInfoTree `no_elab stx) <|
               throwError "elaboration function for '{k}' has not been implemented"
           | elabFns => elabCommandUsing s stx elabFns
-    | _ => throwError "unexpected command"
+    | _ =>
+      withInfoTreeContext (mkInfoTree := mkInfoTree `no_elab stx) <|
+        throwError "unexpected command"
 
 builtin_initialize registerTraceClass `Elab.input
 
@@ -298,7 +305,6 @@ builtin_initialize registerTraceClass `Elab.input
 macro expansion etc.
 -/
 def elabCommandTopLevel (stx : Syntax) : CommandElabM Unit := withRef stx do
-  trace[Elab.input] stx
   let initMsgs ← modifyGet fun st => (st.messages, { st with messages := {} })
   let initInfoTrees ← getResetInfoTrees
   -- We should *not* factor out `elabCommand`'s `withLogging` to here since it would make its error
@@ -393,14 +399,15 @@ def liftTermElabM (x : TermElabM α) : CommandElabM α := do
   let x : TermElabM _  := withSaveInfoContext x
   let x : MetaM _      := (observing x).run (mkTermContext ctx s) { levelNames := scope.levelNames }
   let x : CoreM _      := x.run mkMetaContext {}
-  let x : EIO _ _      := x.run (mkCoreContext ctx s heartbeats) { env := s.env, ngen := s.ngen, nextMacroScope := s.nextMacroScope, infoState.enabled := s.infoState.enabled }
+  let x : EIO _ _      := x.run (mkCoreContext ctx s heartbeats) { env := s.env, ngen := s.ngen, nextMacroScope := s.nextMacroScope, infoState.enabled := s.infoState.enabled, traceState := s.traceState }
   let (((ea, _), _), coreS) ← liftEIO x
   modify fun s => { s with
-    env             := coreS.env
-    nextMacroScope  := coreS.nextMacroScope
-    ngen            := coreS.ngen
-    infoState.trees := s.infoState.trees.append coreS.infoState.trees
-    messages        := addTraceAsMessagesCore ctx (s.messages ++ coreS.messages) coreS.traceState
+    env               := coreS.env
+    nextMacroScope    := coreS.nextMacroScope
+    ngen              := coreS.ngen
+    infoState.trees   := s.infoState.trees.append coreS.infoState.trees
+    traceState.traces := coreS.traceState.traces.map fun t => { t with ref := replaceRef t.ref ctx.ref }
+    messages          := s.messages ++ coreS.messages
   }
   match ea with
   | Except.ok a     => pure a

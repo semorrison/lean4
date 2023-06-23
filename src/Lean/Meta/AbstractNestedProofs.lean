@@ -8,11 +8,18 @@ import Lean.Meta.Closure
 namespace Lean.Meta
 namespace AbstractNestedProofs
 
+def getLambdaBody (e : Expr) : Expr :=
+  match e with
+  | .lam _ _ b _ => getLambdaBody b
+  | _ => e
+
 def isNonTrivialProof (e : Expr) : MetaM Bool := do
   if !(← isProof e) then
     pure false
   else
-    e.withApp fun f args =>
+    -- We consider proofs such as `fun x => f x a` as trivial.
+    -- For example, we don't want to abstract the body of `def rfl`
+    (getLambdaBody e).withApp fun f args =>
       pure $ !f.isAtomic || args.any fun arg => !arg.isAtomic
 
 structure Context where
@@ -31,7 +38,7 @@ private def mkAuxLemma (e : Expr) : M Expr := do
   /- We turn on zeta-expansion to make sure we don't need to perform an expensive `check` step to
      identify which let-decls can be abstracted. If we design a more efficient test, we can avoid the eager zeta expasion step.
      It a benchmark created by @selsam, The extra `check` step was a bottleneck. -/
-  mkAuxDefinitionFor lemmaName e (zeta := true)
+  mkAuxTheoremFor lemmaName e (zeta := true)
 
 partial def visit (e : Expr) : M Expr := do
   if e.isAtomic then

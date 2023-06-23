@@ -191,26 +191,31 @@ where
     return (stx, stackSz)
 
   processNullaryOrCat (stx : Syntax) := do
-    match (← elabParserName? stx[0]) with
+    let ident := stx[0]
+    let id := ident.getId.eraseMacroScopes
+    -- run when parser is neither a decl nor a cat
+    let default := do
+      if (← Parser.isParserAlias id) then
+        ensureNoPrec stx
+        return (← processAlias ident #[])
+      throwError "unknown parser declaration/category/alias '{id}'"
+    match (← elabParserName? ident) with
     | some (.parser c (isDescr := true)) =>
       ensureNoPrec stx
       -- `syntax _ :=` at least enforces this
       let stackSz := 1
       return (mkIdentFrom stx c, stackSz)
     | some (.parser c (isDescr := false)) =>
+      if (← Parser.getParserAliasInfo id).declName == c then
+        -- prefer parser alias over base declaration because it has more metadata, #2249
+        return (← default)
       ensureNoPrec stx
       -- as usual, we assume that people using `Parser` know what they are doing
       let stackSz := 1
       return (← `(ParserDescr.parser $(quote c)), stackSz)
     | some (.category _) =>
       processParserCategory stx
-    | none =>
-      let id := stx[0].getId.eraseMacroScopes
-      if (← Parser.isParserAlias id) then
-        ensureNoPrec stx
-        processAlias stx[0] #[]
-      else
-        throwError "unknown parser declaration/category/alias '{id}'"
+    | none => default
 
   processSepBy (stx : Syntax) := do
     let p ← ensureUnaryOutput <$> withNestedParser do process stx[1]
@@ -260,7 +265,7 @@ open Lean.Parser.Command
 
 private def declareSyntaxCatQuotParser (catName : Name) : CommandElabM Unit := do
   if let .str _ suffix := catName then
-    let quotSymbol := "`(" ++ suffix ++ "|"
+    let quotSymbol := "`(" ++ suffix ++ "| "
     let name := catName ++ `quot
     let cmd ← `(
       @[term_parser] def $(mkIdent name) : Lean.ParserDescr :=
@@ -345,6 +350,20 @@ def resolveSyntaxKind (k : Name) : CommandElabM Name := do
   <|>
   throwError "invalid syntax node kind '{k}'"
 
+def isLocalAttrKind (attrKind : Syntax) : Bool :=
+  match attrKind with
+  | `(Parser.Term.attrKind| local) => true
+  | _ => false
+
+/--
+Add macro scope to `name` if it does not already have them, and `attrKind` is `local`.
+-/
+def addMacroScopeIfLocal [MonadQuotation m] [Monad m] (name : Name) (attrKind : Syntax) : m Name := do
+  if isLocalAttrKind attrKind && !name.hasMacroScopes then
+    MonadQuotation.addMacroScope name
+  else
+    return name
+
 @[builtin_command_elab «syntax»] def elabSyntax : CommandElab := fun stx => do
   let `($[$doc?:docComment]? $[ @[ $attrInstances:attrInstance,* ] ]? $attrKind:attrKind
       syntax%$tk $[: $prec? ]? $[(name := $name?)]? $[(priority := $prio?)]? $[$ps:stx]* : $catStx) := stx
@@ -361,7 +380,8 @@ def resolveSyntaxKind (k : Name) : CommandElabM Name := do
     | none      => pure precDefault
   let name ← match name? with
     | some name => pure name.getId
-    | none => liftMacroM <| mkNameFromParserSyntax cat syntaxParser
+    | none => addMacroScopeIfLocal (← liftMacroM <| mkNameFromParserSyntax cat syntaxParser) attrKind
+  trace[Meta.debug] "name: {name}"
   let prio ← liftMacroM <| evalOptPrio prio?
   let idRef := (name?.map (·.raw)).getD tk
   let stxNodeKind := (← getCurrNamespace) ++ name

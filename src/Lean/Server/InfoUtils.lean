@@ -8,6 +8,33 @@ import Lean.PrettyPrinter
 
 namespace Lean.Elab
 
+/-- Elaborator information with elaborator context.
+
+It can be thought of as a "thunked" elaboration computation that allows us
+to retroactively extract type information, symbol locations, etc.
+through arbitrary invocations of `runMetaM` (where the necessary context and state
+can be reconstructed from `ctx` and `info.lctx`).
+
+W.r.t. widgets, this is used to tag different parts of expressions in `ppExprTagged`.
+This is the input to the RPC call `Lean.Widget.InteractiveDiagnostics.infoToInteractive`.
+It carries over information about delaborated
+`Info` nodes in a `CodeWithInfos`, and the associated pretty-printing
+functionality is purpose-specific to showing the contents of infoview popups.
+
+For use in standard LSP go-to-definition (see `Lean.Server.FileWorker.locationLinksOfInfo`),
+all the elaborator information we need for similar tasks is already fully recoverable via
+the `InfoTree` structure (see `Lean.Elab.InfoTree.visitM`).
+There we use this as a convienience wrapper for queried nodes (e.g. the return value of
+`Lean.Elab.InfoTree.hoverableInfoAt?`). It also includes the children info nodes
+as additional context (this is unused in the RPC case, as delaboration has no notion of child nodes).
+
+NOTE: This type is for internal use in the infoview/LSP. It should not be used in user widgets.
+-/
+structure InfoWithCtx where
+  ctx  : Elab.ContextInfo
+  info : Elab.Info
+  children : PersistentArray InfoTree
+
 /-- Visit nodes, passing in a surrounding context (the innermost one) and accumulating results on the way back up. -/
 partial def InfoTree.visitM [Monad m]
     (preNode  : ContextInfo → Info → (children : PersistentArray InfoTree) → m Unit := fun _ _ _ => pure ())
@@ -135,11 +162,16 @@ def InfoTree.smallestInfo? (p : Info → Bool) (t : InfoTree) : Option (ContextI
   infos.toArray.getMax? (fun a b => a.1 > b.1) |>.map fun (_, ci, i) => (ci, i)
 
 /-- Find an info node, if any, which should be shown on hover/cursor at position `hoverPos`. -/
-partial def InfoTree.hoverableInfoAt? (t : InfoTree) (hoverPos : String.Pos) (includeStop := false) (omitAppFns := false) : Option (ContextInfo × Info) := Id.run do
-  let results := t.visitM (m := Id) (postNode := fun ctx info _ results => do
+partial def InfoTree.hoverableInfoAt? (t : InfoTree) (hoverPos : String.Pos) (includeStop := false) (omitAppFns := false) (omitIdentApps := false) : Option InfoWithCtx := Id.run do
+  let results := t.visitM (m := Id) (postNode := fun ctx info children results => do
     let mut results := results.bind (·.getD [])
     if omitAppFns && info.stx.isOfKind ``Parser.Term.app && info.stx[0].isIdent then
-      results := results.filter (·.2.2.stx != info.stx[0])
+        results := results.filter (·.2.info.stx != info.stx[0])
+    if omitIdentApps && info.stx.isIdent then
+      -- if an identifier stands for an application (e.g. in the case of a typeclass projection), prefer the application
+      if let .ofTermInfo ti := info then
+        if ti.expr.isApp then
+          results := results.filter (·.2.info.stx != info.stx)
     unless results.isEmpty do
       return results  -- prefer innermost results
     /-
@@ -161,7 +193,7 @@ partial def InfoTree.hoverableInfoAt? (t : InfoTree) (hoverPos : String.Pos) (in
       Int.negOfNat (r.stop - r.start).byteIdx,
       -- prefer results for constants over variables (which overlap at declaration names)
       if info matches .ofTermInfo { expr := .fvar .., .. } then 0 else 1)
-    [(priority, ctx, info)]) |>.getD []
+    [(priority, {ctx, info, children})]) |>.getD []
   -- sort results by lexicographical priority
   let maxPrio? :=
     let _ := @lexOrd
@@ -169,8 +201,8 @@ partial def InfoTree.hoverableInfoAt? (t : InfoTree) (hoverPos : String.Pos) (in
     let _ := @maxOfLe
     results.map (·.1) |>.maximum?
   let res? := results.find? (·.1 == maxPrio?) |>.map (·.2)
-  if let some (_, i) := res? then
-    if let .ofTermInfo ti := i then
+  if let some i := res? then
+    if let .ofTermInfo ti := i.info then
       if ti.expr.isSyntheticSorry then
         return none
   return res?
@@ -200,13 +232,15 @@ def Info.docString? (i : Info) : MetaM (Option String) := do
   return none
 
 /-- Construct a hover popup, if any, from an info node in a context.-/
-def Info.fmtHover? (ci : ContextInfo) (i : Info) : IO (Option Format) := do
+def Info.fmtHover? (ci : ContextInfo) (i : Info) : IO (Option FormatWithInfos) := do
   ci.runMetaM i.lctx do
     let mut fmts := #[]
+    let mut infos := ∅
     let modFmt ← try
       let (termFmt, modFmt) ← fmtTermAndModule?
       if let some f := termFmt then
-        fmts := fmts.push f
+        fmts := fmts.push f.fmt
+        infos := f.infos
       pure modFmt
     catch _ => pure none
     if let some m ← i.docString? then
@@ -216,14 +250,14 @@ def Info.fmtHover? (ci : ContextInfo) (i : Info) : IO (Option Format) := do
     if fmts.isEmpty then
       return none
     else
-      return f!"\n***\n".joinSep fmts.toList
+      return some ⟨f!"\n***\n".joinSep fmts.toList, infos⟩
 
 where
   fmtModule? (decl : Name) : MetaM (Option Format) := do
     let some mod ← findModuleOf? decl | return none
     return some f!"*import {mod}*"
 
-  fmtTermAndModule? : MetaM (Option Format × Option Format) := do
+  fmtTermAndModule? : MetaM (Option FormatWithInfos × Option Format) := do
     match i with
     | Info.ofTermInfo ti =>
       let e ← instantiateMVars ti.expr
@@ -232,20 +266,18 @@ where
         return (none, none)
       let tp ← instantiateMVars (← Meta.inferType e)
       let tpFmt ← Meta.ppExpr tp
-      if e.isConst then
-        -- Recall that `ppExpr` adds a `@` if the constant has implicit arguments, and it is quite distracting
-        let eFmt ← withOptions (pp.fullNames.set · true |> (pp.universes.set · true)) <| PrettyPrinter.ppConst e
-        return (some f!"```lean\n{eFmt} : {tpFmt}\n```", ← fmtModule? e.constName!)
-      else
-        let eFmt ← Meta.ppExpr e
-        -- Try not to show too scary internals
-        let showTerm := if let .fvar _ := e then
-          if let some ldecl := (← getLCtx).findFVar? e then
-            !ldecl.userName.hasMacroScopes
-          else false
-        else isAtomicFormat eFmt
-        let fmt := if showTerm then f!"{eFmt} : {tpFmt}" else tpFmt
-        return (some f!"```lean\n{fmt}\n```", none)
+      if let .const c _ := e then
+        let eFmt ← PrettyPrinter.ppSignature c
+        return (some { eFmt with fmt := f!"```lean\n{eFmt.fmt}\n```" }, ← fmtModule? c)
+      let eFmt ← Meta.ppExpr e
+      -- Try not to show too scary internals
+      let showTerm := if let .fvar _ := e then
+        if let some ldecl := (← getLCtx).findFVar? e then
+          !ldecl.userName.hasMacroScopes
+        else false
+      else isAtomicFormat eFmt
+      let fmt := if showTerm then f!"{eFmt} : {tpFmt}" else tpFmt
+      return (some f!"```lean\n{fmt}\n```", none)
     | Info.ofFieldInfo fi =>
       let tp ← Meta.inferType fi.val
       let tpFmt ← Meta.ppExpr tp
@@ -299,7 +331,8 @@ partial def InfoTree.goalsAt? (text : FileMap) (t : InfoTree) (hoverPos : String
               ctxInfo := ctx
               tacticInfo := ti
               useAfter := hoverPos > pos && !cs.any (hasNestedTactic pos tailPos)
-              indented := (text.toPosition pos).column > (text.toPosition hoverPos).column
+              -- consider every position unindented after an empty `by` to support "hanging" `by` uses
+              indented := (text.toPosition pos).column > (text.toPosition hoverPos).column && !isEmptyBy ti.stx
               -- use goals just before cursor as fall-back only
               -- thus for `(by foo)`, placing the cursor after `foo` shows its state as long
               -- as there is no state on `)`
@@ -322,8 +355,12 @@ where
     | InfoTree.node (Info.ofMacroExpansionInfo _) cs =>
       cs.any (hasNestedTactic pos tailPos)
     | _ => false
+  isEmptyBy (stx : Syntax) : Bool :=
+    -- there are multiple `by` kinds with the same structure
+    stx.getNumArgs == 2 && stx[0].isToken "by" && stx[1].getNumArgs == 1 && stx[1][0].isMissing
 
-partial def InfoTree.termGoalAt? (t : InfoTree) (hoverPos : String.Pos) : Option (ContextInfo × Info) :=
+
+partial def InfoTree.termGoalAt? (t : InfoTree) (hoverPos : String.Pos) : Option InfoWithCtx :=
   -- In the case `f a b`, where `f` is an identifier, the term goal at `f` should be the goal for the full application `f a b`.
   hoverableInfoAt? t hoverPos (includeStop := true) (omitAppFns := true)
 

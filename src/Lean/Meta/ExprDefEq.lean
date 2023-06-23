@@ -10,6 +10,27 @@ import Lean.Util.OccursCheck
 namespace Lean.Meta
 
 /--
+  Return `true` if `e` is of the form `fun (x_1 ... x_n) => ?m y_1 ... y_k)`, and `?m` is unassigned.
+  Remark: `n`, `k` may be 0.
+  This function is used to filter unification problems in
+  `isDefEqArgs`/`isDefEqEtaStruct` where we can assign proofs.
+  If one side is of the form described above, then we can likely assign `?m`.
+  But it it's not, we would most likely apply proof irrelevance, which is
+  usually very expensive since it needs to unify the types as well.
+-/
+def isAbstractedUnassignedMVar : Expr → MetaM Bool
+  | .lam _ _ b _ => isAbstractedUnassignedMVar b
+  | .app a _ => isAbstractedUnassignedMVar a
+  | .mvar mvarId => do
+    if (← mvarId.isReadOnlyOrSyntheticOpaque) then
+      pure false
+    else if (← mvarId.isAssigned) then
+      pure false
+    else
+      pure true
+  | _ => pure false
+
+/--
   Return true if `b` is of the form `mk a.1 ... a.n`, and `a` is not a constructor application.
 
   If `a` and `b` are constructor applications, the method returns `false` to force `isDefEq` to use `isDefEqArgs`.
@@ -49,6 +70,13 @@ where
           for i in [ctorVal.numParams : args.size] do
             let j := i - ctorVal.numParams
             let proj ← mkProjFn ctorVal us params j a
+            if ← isProof proj then
+              unless ← isAbstractedUnassignedMVar args[i]! do
+                -- Skip expensive unification problem that is likely solved
+                -- using proof irrelevance.  We already know that `proj` and
+                -- `args[i]!` have the same type, so they're defeq in any case.
+                -- See comment at `isAbstractedUnassignedMVar`.
+                continue
             trace[Meta.isDefEq.eta.struct] "{a} =?= {b} @ [{j}], {proj} =?= {args[i]!}"
             unless (← isDefEq proj args[i]!) do
               trace[Meta.isDefEq.eta.struct] "failed, unexpect arg #{i}, projection{indentExpr proj}\nis not defeq to{indentExpr args[i]!}"
@@ -58,25 +86,33 @@ where
         return false
 
 /--
-  Try to solve `a := (fun x => t) =?= b` by eta-expanding `b`.
+  Try to solve `a := (fun x => t) =?= b` by eta-expanding `b`,
+  resulting in `t =?= b x` (with a fresh free variable `x`).
 
   Remark: eta-reduction is not a good alternative even in a system without universe cumulativity like Lean.
   Example:
     ```
     (fun x : A => f ?m) =?= f
     ```
-    The left-hand side of the constraint above it not eta-reduced because `?m` is a metavariable. -/
-private def isDefEqEta (a b : Expr) : MetaM Bool := do
+    The left-hand side of the constraint above it not eta-reduced because `?m` is a metavariable.
+
+  Note: we do not backtrack after applying η-expansion anymore.
+  There is no case where `(fun x => t) =?= b` unifies, but `t =?= b x` does not.
+  Backtracking after η-expansion results in lots of duplicate δ-reductions,
+  because we can δ-reduce `a` before and after the η-expansion.
+  The fresh free variable `x` also busts the cache.
+  See https://github.com/leanprover/lean4/pull/2002 -/
+private def isDefEqEta (a b : Expr) : MetaM LBool := do
   if a.isLambda && !b.isLambda then
     let bType ← inferType b
     let bType ← whnfD bType
     match bType with
     | Expr.forallE n d _ c =>
       let b' := mkLambda n c d (mkApp b (mkBVar 0))
-      checkpointDefEq <| Meta.isExprDefEqAux a b'
-    | _ => pure false
+      toLBoolM <| checkpointDefEq <| Meta.isExprDefEqAux a b'
+    | _ => return .undef
   else
-    return false
+    return .undef
 
 /-- Support for `Lean.reduceBool` and `Lean.reduceNat` -/
 def isDefEqNative (s t : Expr) : MetaM LBool := do
@@ -214,12 +250,26 @@ private def isDefEqArgsFirstPass
       trace[Meta.isDefEq] "found messy {a₁} =?= {a₂}"
       postponedHO := postponedHO.push i
     else if info.isExplicit then
+      if info.isProp then
+        unless ← isAbstractedUnassignedMVar a₁ <||> isAbstractedUnassignedMVar a₂ do
+          -- Skip expensive unification problem that is likely solved
+          -- using proof irrelevance.  We already know that `a₁` and
+          -- `a₂` have the same type, so they're defeq in any case.
+          -- See comment at `isAbstractedUnassignedMVar`.
+          continue
       unless (← Meta.isExprDefEqAux a₁ a₂) do
         return .failed
     else if (← isEtaUnassignedMVar a₁ <||> isEtaUnassignedMVar a₂) then
       unless (← Meta.isExprDefEqAux a₁ a₂) do
         return .failed
     else
+      if info.isProp then
+        unless ← isAbstractedUnassignedMVar a₁ <||> isAbstractedUnassignedMVar a₂ do
+          -- Skip expensive unification problem that is likely solved
+          -- using proof irrelevance.  We already know that `a₁` and
+          -- `a₂` have the same type, so they're defeq in any case.
+          -- See comment at `isAbstractedUnassignedMVar`.
+          continue
       postponedImplicit := postponedImplicit.push i
   return .ok postponedImplicit postponedHO
 
@@ -719,7 +769,7 @@ mutual
               let lctx := toErase.foldl (init := mvarDecl.lctx) fun lctx toEraseFVar =>
                 lctx.erase toEraseFVar
               /- Compute new set of local instances. -/
-              let localInsts := mvarDecl.localInstances.filter fun localInst => toErase.contains localInst.fvar.fvarId!
+              let localInsts := mvarDecl.localInstances.filter fun localInst => !toErase.contains localInst.fvar.fvarId!
               let mvarType ← check mvarDecl.type
               let newMVar ← mkAuxMVar lctx localInsts mvarType mvarDecl.numScopeArgs
               mvarId.assign newMVar
@@ -1633,13 +1683,31 @@ private def isDefEqOnFailure (t s : Expr) : MetaM Bool := do
     tryUnificationHints t s <||> tryUnificationHints s t
 
 private def isDefEqProj : Expr → Expr → MetaM Bool
-  | Expr.proj _ i t, Expr.proj _ j s => pure (i == j) <&&> Meta.isExprDefEqAux t s
+  | Expr.proj m i t, Expr.proj n j s => pure (i == j && m == n) <&&> Meta.isExprDefEqAux t s
   | Expr.proj structName 0 s, v => isDefEqSingleton structName s v
   | v, Expr.proj structName 0 s => isDefEqSingleton structName s v
   | _, _ => pure false
 where
   /-- If `structName` is a structure with a single field and `(?m ...).1 =?= v`, then solve contraint as `?m ... =?= ⟨v⟩` -/
   isDefEqSingleton (structName : Name) (s : Expr) (v : Expr) : MetaM Bool := do
+    if isClass (← getEnv) structName then
+      /-
+      We disable this feature is `structName` is a class. See issue #2011.
+      The example at issue #2011, the following weird
+      instance was being generated for `Zero (f x)`
+      ```
+      (@Zero.mk (f x✝) ((@instZero I (fun i => f i) fun i => inst✝¹ i).1 x✝)
+      ```
+      where `inst✝¹` is the local instance `[∀ i, Zero (f i)]`
+      Note that this instance is definitinally equal to the expected nicer
+      instance `inst✝¹ x✝`.
+      However, the nasty instance trigger nasty unification higher order
+      constraints later.
+
+      We say this behavior is defensible because it is more reliable to use TC resolution to
+      assign `?m`.
+      -/
+      return false
     let ctorVal := getStructureCtor (← getEnv) structName
     if ctorVal.numFields != 1 then
       return false -- It is not a structure with a single field.
@@ -1701,28 +1769,28 @@ private def isDefEqProjInst (t : Expr) (s : Expr) : MetaM LBool := do
     return .undef
 
 private def isExprDefEqExpensive (t : Expr) (s : Expr) : MetaM Bool := do
-  if (← (isDefEqEta t s <||> isDefEqEta s t)) then return true
-  -- TODO: investigate whether this is the place for putting this check
-  if (← (isDefEqEtaStruct t s <||> isDefEqEtaStruct s t)) then return true
+  whenUndefDo (isDefEqEta t s) do
+  whenUndefDo (isDefEqEta s t) do
   if (← isDefEqProj t s) then return true
-  let t' ← whnfCore t
-  let s' ← whnfCore s
-  if t != t' || s != s' then
-    Meta.isExprDefEqAux t' s'
+  whenUndefDo (isDefEqNative t s) do
+  whenUndefDo (isDefEqNat t s) do
+  whenUndefDo (isDefEqOffset t s) do
+  whenUndefDo (isDefEqDelta t s) do
+  -- We try structure eta *after* lazy delta reduction;
+  -- otherwise we would end up applying it at every step of a reduction chain
+  -- as soon as one of the sides is a constructor application,
+  -- which is very costly because it requires us to unify the fields.
+  if (← (isDefEqEtaStruct t s <||> isDefEqEtaStruct s t)) then
+    return true
+  if t.isConst && s.isConst then
+    if t.constName! == s.constName! then isListLevelDefEqAux t.constLevels! s.constLevels! else return false
+  else if (← pure t.isApp <&&> pure s.isApp <&&> isDefEqApp t s) then
+    return true
   else
-    whenUndefDo (isDefEqNative t s) do
-    whenUndefDo (isDefEqNat t s) do
-    whenUndefDo (isDefEqOffset t s) do
-    whenUndefDo (isDefEqDelta t s) do
-    if t.isConst && s.isConst then
-      if t.constName! == s.constName! then isListLevelDefEqAux t.constLevels! s.constLevels! else return false
-    else if (← pure t.isApp <&&> pure s.isApp <&&> isDefEqApp t s) then
-      return true
-    else
-      whenUndefDo (isDefEqProjInst t s) do
-      whenUndefDo (isDefEqStringLit t s) do
-      if (← isDefEqUnitLike t s) then return true else
-      isDefEqOnFailure t s
+    whenUndefDo (isDefEqProjInst t s) do
+    whenUndefDo (isDefEqStringLit t s) do
+    if (← isDefEqUnitLike t s) then return true else
+    isDefEqOnFailure t s
 
 private def mkCacheKey (t : Expr) (s : Expr) : Expr × Expr :=
   if Expr.quickLt t s then (t, s) else (s, t)
@@ -1747,9 +1815,16 @@ partial def isExprDefEqAuxImpl (t : Expr) (s : Expr) : MetaM Bool := withIncRecD
   checkMaxHeartbeats "isDefEq"
   whenUndefDo (isDefEqQuick t s) do
   whenUndefDo (isDefEqProofIrrel t s) do
-  -- We perform `whnfCore` again with `deltaAtProj := true` at `isExprDefEqExpensive` after `isDefEqProj`
-  let t' ← whnfCore t (deltaAtProj := false)
-  let s' ← whnfCore s (deltaAtProj := false)
+  /-
+    We also reduce projections here to prevent expensive defeq checks when unifying TC operations.
+    When unifying e.g. `@Neg.neg α (@Field.toNeg α inst1) =?= @Neg.neg α (@Field.toNeg α inst2)`,
+    we only want to unify negation (and not all other field operations as well).
+    Unifying the field instances slowed down unification: https://github.com/leanprover/lean4/issues/1986
+    We used to *not* reduce projections here, to support unifying `(?a).1 =?= (x, y).1`.
+    NOTE: this still seems to work because we don't eagerly unfold projection definitions to primitive projections.
+  -/
+  let t' ← whnfCore t
+  let s' ← whnfCore s
   if t != t' || s != s' then
     isExprDefEqAuxImpl t' s'
   else
@@ -1782,7 +1857,7 @@ partial def isExprDefEqAuxImpl (t : Expr) (s : Expr) : MetaM Bool := withIncRecD
 builtin_initialize
   registerTraceClass `Meta.isDefEq
   registerTraceClass `Meta.isDefEq.stuck
-  registerTraceClass `Meta.isDefEq.stuck.mvar (inherited := true)
+  registerTraceClass `Meta.isDefEq.stuckMVar (inherited := true)
   registerTraceClass `Meta.isDefEq.cache
   registerTraceClass `Meta.isDefEq.foApprox (inherited := true)
   registerTraceClass `Meta.isDefEq.onFailure (inherited := true)

@@ -16,9 +16,9 @@ macro "Macro.trace[" id:ident "]" s:interpolatedStr(term) : term =>
 
 -- Auxiliary parsers and functions for declaring notation with binders
 
-syntax unbracketedExplicitBinders := binderIdent+ (" : " term)?
-syntax bracketedExplicitBinders   := "(" withoutPosition(binderIdent+ " : " term) ")"
-syntax explicitBinders            := bracketedExplicitBinders+ <|> unbracketedExplicitBinders
+syntax unbracketedExplicitBinders := (ppSpace binderIdent)+ (" : " term)?
+syntax bracketedExplicitBinders   := "(" withoutPosition((binderIdent ppSpace)+ ": " term) ")"
+syntax explicitBinders            := (ppSpace bracketedExplicitBinders)+ <|> unbracketedExplicitBinders
 
 open TSyntax.Compat in
 def expandExplicitBindersAux (combinator : Syntax) (idents : Array Syntax) (type? : Option Syntax) (body : Syntax) : MacroM Syntax :=
@@ -46,7 +46,7 @@ def expandBrackedBindersAux (combinator : Syntax) (binders : Array Syntax) (body
   loop binders.size body
 
 def expandExplicitBinders (combinatorDeclName : Name) (explicitBinders : Syntax) (body : Syntax) : MacroM Syntax := do
-  let combinator := mkIdentFrom (← getRef) combinatorDeclName
+  let combinator := mkCIdentFrom (← getRef) combinatorDeclName
   let explicitBinders := explicitBinders[0]
   if explicitBinders.getKind == ``Lean.unbracketedExplicitBinders then
     let idents   := explicitBinders[0].getArgs
@@ -58,13 +58,14 @@ def expandExplicitBinders (combinatorDeclName : Name) (explicitBinders : Syntax)
     Macro.throwError "unexpected explicit binder"
 
 def expandBrackedBinders (combinatorDeclName : Name) (bracketedExplicitBinders : Syntax) (body : Syntax) : MacroM Syntax := do
-  let combinator := mkIdentFrom (← getRef) combinatorDeclName
+  let combinator := mkCIdentFrom (← getRef) combinatorDeclName
   expandBrackedBindersAux combinator #[bracketedExplicitBinders] body
 
 syntax unifConstraint := term patternIgnore(" =?= " <|> " ≟ ") term
 syntax unifConstraintElem := colGe unifConstraint ", "?
 
-syntax (docComment)? attrKind "unif_hint " (ident)? bracketedBinder* " where " withPosition(unifConstraintElem*) patternIgnore("|-" <|> "⊢ ") unifConstraint : command
+syntax (docComment)? attrKind "unif_hint" (ppSpace ident)? (ppSpace bracketedBinder)*
+  " where " withPosition(unifConstraintElem*) patternIgnore("|-" <|> "⊢ ") unifConstraint : command
 
 macro_rules
   | `($[$doc?:docComment]? $kind:attrKind unif_hint $(n)? $bs* where $[$cs₁ ≟ $cs₂]* |- $t₁ ≟ $t₂) => do
@@ -79,7 +80,7 @@ open Lean
 
 section
 open TSyntax.Compat
-macro "∃ " xs:explicitBinders ", " b:term : term => expandExplicitBinders ``Exists xs b
+macro "∃" xs:explicitBinders ", " b:term : term => expandExplicitBinders ``Exists xs b
 macro "exists" xs:explicitBinders ", " b:term : term => expandExplicitBinders ``Exists xs b
 macro "Σ" xs:explicitBinders ", " b:term : term => expandExplicitBinders ``Sigma xs b
 macro "Σ'" xs:explicitBinders ", " b:term : term => expandExplicitBinders ``PSigma xs b
@@ -87,8 +88,11 @@ macro:35 xs:bracketedExplicitBinders " × " b:term:35  : term => expandBrackedBi
 macro:35 xs:bracketedExplicitBinders " ×' " b:term:35 : term => expandBrackedBinders ``PSigma xs b
 end
 
+-- first step of a `calc` block
+syntax calcFirstStep := ppIndent(colGe term (" := " term)?)
 -- enforce indentation of calc steps so we know when to stop parsing them
-syntax calcStep := ppIndent(colGe term " := " withPosition(term))
+syntax calcStep := ppIndent(colGe term " := " term)
+syntax calcSteps := ppLine withPosition(calcFirstStep) withPosition((ppLine calcStep)*)
 
 /-- Step-wise reasoning over transitive relations.
 ```
@@ -101,6 +105,23 @@ calc
 proves `a = z` from the given step-wise proofs. `=` can be replaced with any
 relation implementing the typeclass `Trans`. Instead of repeating the right-
 hand sides, subsequent left-hand sides can be replaced with `_`.
+```
+calc
+  a = b := pab
+  _ = c := pbc
+  ...
+  _ = z := pyz
+```
+It is also possible to write the *first* relation as `<lhs>\n  _ = <rhs> :=
+<proof>`. This is useful for aligning relation symbols, especially on longer:
+identifiers:
+```
+calc abc
+  _ = bce := pabce
+  _ = cef := pbcef
+  ...
+  _ = xyz := pwxyz
+```
 
 `calc` has term mode and tactic mode variants. This is the term mode variant.
 
@@ -108,7 +129,7 @@ See [Theorem Proving in Lean 4][tpil4] for more information.
 
 [tpil4]: https://leanprover.github.io/theorem_proving_in_lean4/quantifiers_and_equality.html#calculational-proofs
 -/
-syntax (name := calc) "calc" ppLine withPosition(calcStep) ppLine withPosition((calcStep ppLine)*) : term
+syntax (name := calc) "calc" calcSteps : term
 
 /-- Step-wise reasoning over transitive relations.
 ```
@@ -121,6 +142,22 @@ calc
 proves `a = z` from the given step-wise proofs. `=` can be replaced with any
 relation implementing the typeclass `Trans`. Instead of repeating the right-
 hand sides, subsequent left-hand sides can be replaced with `_`.
+```
+calc
+  a = b := pab
+  _ = c := pbc
+  ...
+  _ = z := pyz
+```
+It is also possible to write the *first* relation as `<lhs>\n  _ = <rhs> :=
+<proof>`. This is useful for aligning relation symbols:
+```
+calc abc
+  _ = bce := pabce
+  _ = cef := pbcef
+  ...
+  _ = xyz := pwxyz
+```
 
 `calc` has term mode and tactic mode variants. This is the tactic mode variant,
 which supports an additional feature: it works even if the goal is `a = z'`
@@ -131,7 +168,7 @@ See [Theorem Proving in Lean 4][tpil4] for more information.
 
 [tpil4]: https://leanprover.github.io/theorem_proving_in_lean4/quantifiers_and_equality.html#calculational-proofs
 -/
-syntax (name := calcTactic) "calc" ppLine withPosition(calcStep) ppLine withPosition((calcStep ppLine)*) : tactic
+syntax (name := calcTactic) "calc" calcSteps : tactic
 
 @[app_unexpander Unit.unit] def unexpandUnit : Lean.PrettyPrinter.Unexpander
   | `($(_)) => `(())
@@ -285,7 +322,7 @@ syntax (name := calcTactic) "calc" ppLine withPosition(calcStep) ppLine withPosi
 
 /--
 Apply function extensionality and introduce new hypotheses.
-The tactic `funext` will keep applying new the `funext` lemma until the goal target is not reducible to
+The tactic `funext` will keep applying the `funext` lemma until the goal target is not reducible to
 ```
   |-  ((fun x => ...) = (fun x => ...))
 ```
@@ -296,9 +333,10 @@ Patterns can be used like in the `intro` tactic. Example, given a goal
 ```
 `funext (a, b)` applies `funext` once and performs pattern matching on the newly introduced pair.
 -/
-syntax "funext " (colGt term:max)+ : tactic
+syntax "funext" (ppSpace colGt term:max)* : tactic
 
 macro_rules
+  | `(tactic|funext) => `(tactic| repeat (apply funext; intro))
   | `(tactic|funext $x) => `(tactic| apply funext; intro $x:term)
   | `(tactic|funext $x $xs*) => `(tactic| apply funext; intro $x:term; funext $xs*)
 
@@ -335,19 +373,14 @@ macro_rules
     `($mods:declModifiers class $id $params* extends $parents,* $[: $ty]?
       attribute [instance] $ctor)
 
-section
-open Lean.Parser.Tactic
-syntax cdotTk := patternIgnore("·" <|> ".")
+syntax cdotTk := patternIgnore("· " <|> ". ")
 /-- `· tac` focuses on the main goal and tries to solve it using `tac`, or else fails. -/
-syntax cdotTk ppSpace sepBy1IndentSemicolon(tactic) : tactic
-macro_rules
-  | `(tactic| $cdot:cdotTk $tacs*) => `(tactic| {%$cdot $tacs* }%$cdot)
-end
+syntax (name := cdot) cdotTk tacticSeqIndentGt : tactic
 
 /--
   Similar to `first`, but succeeds only if one the given tactics solves the current goal.
 -/
-syntax (name := solve) "solve " withPosition((colGe "|" tacticSeq)+) : tactic
+syntax (name := solve) "solve" withPosition((ppDedent(ppLine) colGe "| " tacticSeq)+) : tactic
 
 macro_rules
   | `(tactic| solve $[| $ts]* ) => `(tactic| focus first $[| ($ts); done]*)
@@ -384,12 +417,12 @@ syntax "while " termBeforeDo " do " doSeq : doElem
 macro_rules
   | `(doElem| while $cond do $seq) => `(doElem| repeat if $cond then $seq else break)
 
-syntax "repeat " doSeq " until " term : doElem
+syntax "repeat " doSeq ppDedent(ppLine) "until " term : doElem
 
 macro_rules
   | `(doElem| repeat $seq until $cond) => `(doElem| repeat do $seq:doSeq; if $cond then break)
 
-macro:50 e:term:51 " matches " p:sepBy1(term:51, "|") : term =>
+macro:50 e:term:51 " matches " p:sepBy1(term:51, " | ") : term =>
   `(((match $e:term with | $[$p:term]|* => true | _ => false) : Bool))
 
 end Lean

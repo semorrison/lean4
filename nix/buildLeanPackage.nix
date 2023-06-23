@@ -1,6 +1,6 @@
 { lean, lean-leanDeps ? lean, lean-final ? lean, leanc,
   stdenv, lib, coreutils, gnused, writeShellScriptBin, bash, lean-emacs, lean-vscode, nix, substituteAll, symlinkJoin, linkFarmFromDrvs,
-  runCommand, gmp, darwin, mkShell, ... }:
+  runCommand, darwin, mkShell, ... }:
 let lean-final' = lean-final; in
 lib.makeOverridable (
 { name, src, fullSrc ? src, srcPrefix ? "",
@@ -36,7 +36,10 @@ with builtins; let
   # "Init.Core" ~> "Init/Core"
   modToPath = mod: replaceStrings ["."] ["/"] mod;
   modToAbsPath = mod: "${src}/${modToPath mod}";
-  modToLean = mod: "${modToAbsPath mod}.lean";
+  # sanitize file name before copying to store, except when already in store
+  copyToStoreSafe = base: suffix: if lib.isDerivation base then base + suffix else
+    builtins.path { name = lib.strings.sanitizeDerivationName (baseNameOf suffix); path = base + suffix; };
+  modToLean = mod: copyToStoreSafe src "/${modToPath mod}.lean";
   bareStdenv = ./bareStdenv;
   mkBareDerivation = args: derivation (args // {
     name = lib.strings.sanitizeDerivationName args.name;
@@ -60,24 +63,23 @@ with builtins; let
     libName = "${name}${stdenv.hostPlatform.extensions.sharedLibrary}";
   } ''
     mkdir -p $out
-    ${leanc}/bin/leanc -fPIC -shared ${lib.optionalString stdenv.isLinux "-Bsymbolic"} ${lib.optionalString stdenv.isDarwin "-Wl,-undefined,dynamic_lookup"} -L ${gmp}/lib \
-      ${args} -o $out/$libName
+    ${leanc}/bin/leanc -shared ${args} -o $out/$libName
   '';
   depRoot = name: deps: mkBareDerivation {
     name = "${name}-depRoot";
     inherit deps;
     depRoots = map (drv: drv.LEAN_PATH) deps;
+
+    passAsFile = [ "deps" "depRoots" ];
     buildCommand = ''
       mkdir -p $out
-      for i in $depRoots; do
+      for i in $(cat $depRootsPath); do
         cp -dru --no-preserve=mode $i/. $out
       done
-      for i in $deps; do
+      for i in $(cat $depsPath); do
         cp -drsu --no-preserve=mode $i/. $out
       done
     '';
-    preferLocalBuild = true;
-    allowSubstitutes = false;
   };
   srcRoot = src;
 
@@ -113,13 +115,13 @@ with builtins; let
       # we can't know the required files without parsing dependencies (which is what we want this
       # function for), so we approximate to the entire package.
       let root = (head (split "\\." g));
-      in lib.optional (pathExists (modToLean root)) root ++ lib.optionals (pathExists (modToAbsPath root)) (submodules root)
+      in lib.optional (pathExists (src + "/${modToPath root}.lean")) root ++ lib.optionals (pathExists (modToAbsPath root)) (submodules root)
     else if g.glob == "one" then expandGlobAllApprox g.mod
     else if g.glob == "submodules" then submodules g.mod
     else if g.glob == "andSubmodules" then [g.mod] ++ submodules g.mod
     else throw "unknown glob kind '${g}'";
   # list of modules that could potentially be involved in the build
-  candidateMods = filter (m: pathExists (modToLean m)) (lib.unique (concatMap expandGlobAllApprox roots));
+  candidateMods = lib.unique (concatMap expandGlobAllApprox roots);
   candidateFiles = map modToLean candidateMods;
   modDepsFile = args.modDepsFile or mkBareDerivation {
     name = "${name}-deps.json";
@@ -133,6 +135,7 @@ with builtins; let
   modDeps = fromJSON (
     # the only possible references to store paths in the JSON should be inside errors, so no chance of missed dependencies from this
     unsafeDiscardStringContext (readFile "${modDepsFile}/${modDepsFile.name}"));
+  # map from module name to list of imports
   modDepsMap = listToAttrs (lib.zipListsWith lib.nameValuePair candidateMods modDeps.imports);
   maybeOverrideAttrs = f: x: if f != null then x.overrideAttrs f else x;
   # build module (.olean and .c) given derivations of all (immediate) dependencies
@@ -145,7 +148,7 @@ with builtins; let
     buildInputs = [ lean ];
     leanPath = relpath + ".lean";
     # should be either single .lean file or directory directly containing .lean file plus dependencies
-    src = srcRoot + ("/" + leanPath);
+    src = copyToStoreSafe srcRoot ("/" + leanPath);
     outputs = [ "out" "ilean" "c" ];
     oleanPath = relpath + ".olean";
     ileanPath = relpath + ".ilean";
@@ -187,19 +190,13 @@ with builtins; let
       propagatedLoadDynlibs = [sharedLib];
     };
   externalModMap = lib.foldr (dep: depMap: depMap // dep.mods) {} allExternalDeps;
-  # Recursively build `mod` and its dependencies. `modMap` maps module names to
-  # `{ deps, drv }` pairs of a derivation and its transitive dependencies (as a nested
-  # mapping from module names to derivations). It is passed linearly through the
-  # recursion to memoize common dependencies.
-  buildModAndDeps = mod: modMap: if modMap ? ${mod} || externalModMap ? ${mod} then modMap else
+  # map from module name to derivation
+  modCandidates = mapAttrs (mod: header:
     let
-      deps = if modDepsMap ? ${mod}
-             then if modDepsMap.${mod}.errors == []
-             then map (m: m.module) modDepsMap.${mod}.imports
-             else abort "errors while parsing imports of ${mod}:\n${lib.concatStringsSep "\n" modDepsMap.${mod}.errors}"
-             else [];
-      modMap' = lib.foldr buildModAndDeps modMap deps;
-    in modMap' // { ${mod} = mkMod mod (map (dep: if modMap' ? ${dep} then modMap'.${dep} else externalModMap.${dep}) deps); };
+      deps = if header.errors == []
+             then map (m: m.module) header.imports
+             else abort "errors while parsing imports of ${mod}:\n${lib.concatStringsSep "\n" header.errors}";
+    in mkMod mod (map (dep: if modDepsMap ? ${dep} then modCandidates.${dep} else externalModMap.${dep}) deps)) modDepsMap;
   makeEmacsWrapper = name: emacs: lean: writeShellScriptBin name ''
     ${emacs} --eval "(progn (setq lean4-rootdir \"${lean}\"))" "$@"
   '';
@@ -220,7 +217,11 @@ with builtins; let
     else if g.glob == "submodules" then submodules g.mod
     else if g.glob == "andSubmodules" then [g.mod] ++ submodules g.mod
     else throw "unknown glob kind '${g}'";
-  mods' = lib.foldr buildModAndDeps {} (concatMap expandGlob roots);
+  # subset of `modCandidates` that is transitively reachable from `roots`
+  mods' = listToAttrs (map (e: { name = e.key; value = modCandidates.${e.key}; }) (genericClosure {
+    startSet = map (m: { key = m; }) (concatMap expandGlob roots);
+    operator = e: if modDepsMap ? ${e.key} then map (m: { key = m.module; }) (filter (m: modCandidates ? ${m.module}) modDepsMap.${e.key}.imports) else [];
+  }));
   allLinkFlags = lib.foldr (shared: acc: acc ++ [ "-L${shared}" "-l${shared.linkName or shared.name}" ]) linkFlags allNativeSharedLibs;
 
   objects   = mapAttrs (_: m: m.obj) mods';
@@ -241,13 +242,14 @@ in rec {
       lib.optionalAttrs precompilePackage { propagatedLoadDynlibs = [sharedLib]; })
     mods';
   modRoot   = depRoot name (attrValues mods);
+  depRoots  = linkFarmFromDrvs "depRoots" (map (m: m.LEAN_PATH) (attrValues mods));
   cTree     = symlinkJoin { name = "${name}-cTree"; paths = map (mod: mod.c) (attrValues mods); };
   oTree     = symlinkJoin { name = "${name}-oTree"; paths = (attrValues objects); };
   iTree     = symlinkJoin { name = "${name}-iTree"; paths = map (mod: mod.ilean) (attrValues mods); };
   sharedLib = mkSharedLib "lib${libName}" ''
     ${if stdenv.isDarwin then "-Wl,-force_load,${staticLib}/lib${libName}.a" else "-Wl,--whole-archive ${staticLib}/lib${libName}.a -Wl,--no-whole-archive"} \
     ${lib.concatStringsSep " " (map (d: "${d.sharedLib}/*") deps)}'';
-  executable = lib.makeOverridable ({ withSharedStdlib ? false }: let
+  executable = lib.makeOverridable ({ withSharedStdlib ? true }: let
       objPaths = map (drv: "${drv}/${drv.oPath}") (attrValues objects) ++ lib.optional withSharedStdlib "${lean-final.leanshared}/*";
     in runCommand executableName { buildInputs = [ stdenv.cc leanc ]; } ''
       mkdir -p $out/bin

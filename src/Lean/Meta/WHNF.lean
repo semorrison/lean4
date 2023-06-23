@@ -155,12 +155,24 @@ private def toCtorWhenStructure (inductName : Name) (major : Expr) : MetaM Expr 
         return result
     | _ => return major
 
+
+-- Helper predicate that returns `true` for inductive predicates used to define functions by well-founded recursion.
+private def isWFRec (declName : Name) : Bool :=
+  declName == ``Acc.rec || declName == ``WellFounded.rec
+
 /-- Auxiliary function for reducing recursor applications. -/
 private def reduceRec (recVal : RecursorVal) (recLvls : List Level) (recArgs : Array Expr) (failK : Unit → MetaM α) (successK : Expr → MetaM α) : MetaM α :=
   let majorIdx := recVal.getMajorIdx
   if h : majorIdx < recArgs.size then do
     let major := recArgs.get ⟨majorIdx, h⟩
-    let mut major ← whnf major
+    let mut major ← if isWFRec recVal.name && (← getTransparency) == TransparencyMode.default then
+      -- If recursor is `Acc.rec` or `WellFounded.rec` and transparency is default,
+      -- then we bump transparency to .all to make sure we can unfold defs defined by WellFounded recursion.
+      -- We use this trick because we abstract nested proofs occurring in definitions.
+      -- Alternative design: do not abstract nested proofs used to justify well-founded recursion.
+      withTransparency .all <| whnf major
+    else
+      whnf major
     if recVal.k then
       major ← toCtorWhenK recVal major
     major := major.toCtorIfLit
@@ -368,7 +380,7 @@ inductive ReduceMatcherResult where
   should reduce in any transparency mode.
   Thus, we define a custom `canUnfoldAtMatcher` predicate for `whnfMatcher`.
 
-  This solution is not very modular because modications at the `match` compiler require changes here.
+  This solution is not very modular because modifications at the `match` compiler require changes here.
   We claim this is defensible because it is reducing the auxiliary declaration defined by the `match` compiler.
 
   Alternative solution: tactics that use `TransparencyMode.reducible` should rely on the equations we generated for match-expressions.
@@ -378,7 +390,7 @@ inductive ReduceMatcherResult where
 def canUnfoldAtMatcher (cfg : Config) (info : ConstantInfo) : CoreM Bool := do
   match cfg.transparency with
   | TransparencyMode.all     => return true
-  | TransparencyMode.default => return true
+  | TransparencyMode.default => return !(← isIrreducible info.name)
   | _ =>
     if (← isReducible info.name) || isGlobalInstance (← getEnv) info.name then
       return true
@@ -402,7 +414,7 @@ def canUnfoldAtMatcher (cfg : Config) (info : ConstantInfo) : CoreM Bool := do
 
 private def whnfMatcher (e : Expr) : MetaM Expr := do
   /- When reducing `match` expressions, if the reducibility setting is at `TransparencyMode.reducible`,
-     we increase it to `TransparencyMode.instance`. We use the `TransparencyMode.reducible` in many places (e.g., `simp`),
+     we increase it to `TransparencyMode.instances`. We use the `TransparencyMode.reducible` in many places (e.g., `simp`),
      and this setting prevents us from reducing `match` expressions where the discriminants are terms such as `OfNat.ofNat α n inst`.
      For example, `simp [Int.div]` will not unfold the application `Int.div 2 1` occuring in the target.
 
@@ -490,7 +502,6 @@ expand let-expressions, expand assigned meta-variables.
 
 The parameter `deltaAtProj` controls how to reduce projections `s.i`. If `deltaAtProj == true`,
 then delta reduction is used to reduce `s` (i.e., `whnf` is used), otherwise `whnfCore`.
-We only set this flag to `false` when implementing `isDefEq`.
 
 If `simpleReduceOnly`, then `iota` and projection reduction are not performed.
 Note that the value of `deltaAtProj` is irrelevant if `simpleReduceOnly = true`.
@@ -709,7 +720,8 @@ mutual
       if smartUnfolding.get (← getOptions) && (← getEnv).contains (mkSmartUnfoldingNameFor declName) then
         return none
       else
-        let (some (cinfo@(ConstantInfo.defnInfo _))) ← getConstNoEx? declName | pure none
+        let some cinfo ← getConstNoEx? declName | pure none
+        unless cinfo.hasValue do return none
         deltaDefinition cinfo lvls
           (fun _ => pure none)
           (fun e => pure (some e))

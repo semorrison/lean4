@@ -412,7 +412,7 @@ inductive Expr where
 
   The let-expression `let x : Nat := 2; Nat.succ x` is represented as
   ```
-  Expr.letE `x (.const `Nat []) (.lit (.natVal 2)) (.bvar 0) true
+  Expr.letE `x (.const `Nat []) (.lit (.natVal 2)) (.app (.const `Nat.succ []) (.bvar 0)) true
   ```
   -/
   | letE (declName : Name) (type : Expr) (value : Expr) (body : Expr) (nonDep : Bool)
@@ -1400,6 +1400,10 @@ def getAutoParamTactic? (e : Expr) : Option Expr :=
 def isOutParam (e : Expr) : Bool :=
   e.isAppOfArity ``outParam 1
 
+/-- Return `true` if `e` is of the form `semiOutParam _` -/
+def isSemiOutParam (e : Expr) : Bool :=
+  e.isAppOfArity ``semiOutParam 1
+
 /-- Return `true` if `e` is of the form `optParam _ _` -/
 def isOptParam (e : Expr) : Bool :=
   e.isAppOfArity ``optParam 2
@@ -1419,7 +1423,7 @@ Examples:
 partial def consumeTypeAnnotations (e : Expr) : Expr :=
   if e.isOptParam || e.isAutoParam then
     consumeTypeAnnotations e.appFn!.appArg!
-  else if e.isOutParam then
+  else if e.isOutParam || e.isSemiOutParam then
     consumeTypeAnnotations e.appArg!
   else
     e

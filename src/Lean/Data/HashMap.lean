@@ -31,14 +31,14 @@ namespace HashMapImp
 variable {α : Type u} {β : Type v}
 
 /- Remark: we use a C implementation because this function is performance critical. -/
-@[extern c inline "(size_t)(#2) & (lean_unbox(#1) - 1)"]
+@[extern "lean_data_hashmap_mk_idx"]
 private def mkIdx {sz : Nat} (hash : UInt64) (h : sz.isPowerOfTwo) : { u : USize // u.toNat < sz } :=
   -- TODO: avoid `if` in the reference implementation
   let u := hash.toUSize &&& (sz.toUSize - 1)
   if h' : u.toNat < sz then
     ⟨u, h'⟩
   else
-    ⟨0, by simp [USize.toNat, OfNat.ofNat, USize.ofNat, Fin.ofNat']; rw [Nat.zero_mod]; apply Nat.pos_of_isPowerOfTwo h⟩
+    ⟨0, by simp [USize.toNat, OfNat.ofNat, USize.ofNat, Fin.ofNat']; apply Nat.pos_of_isPowerOfTwo h⟩
 
 @[inline] def reinsertAux (hashFn : α → UInt64) (data : HashMapBucket α β) (a : α) (b : β) : HashMapBucket α β :=
   let ⟨i, h⟩ := mkIdx (hashFn a) data.property

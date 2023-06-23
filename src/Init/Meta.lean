@@ -271,10 +271,11 @@ abbrev CharLit := TSyntax charLitKind
 abbrev NameLit := TSyntax nameLitKind
 abbrev ScientificLit := TSyntax scientificLitKind
 abbrev NumLit := TSyntax numLitKind
+abbrev HygieneInfo := TSyntax hygieneInfoKind
 
 end Syntax
 
-export Syntax (Term Command Prec Prio Ident StrLit CharLit NameLit ScientificLit NumLit)
+export Syntax (Term Command Prec Prio Ident StrLit CharLit NameLit ScientificLit NumLit HygieneInfo)
 
 namespace TSyntax
 
@@ -451,9 +452,6 @@ end Syntax
   | none => x
   | some ref => withRef ref x
 
-@[inline] def mkNode (k : SyntaxNodeKind) (args : Array Syntax) : TSyntax k :=
-  ⟨Syntax.node SourceInfo.none k args⟩
-
 /-- Syntax objects for a Lean module. -/
 structure Module where
   header   : Syntax
@@ -527,9 +525,6 @@ def mkCIdent (c : Name) : Ident :=
 @[export lean_mk_syntax_ident]
 def mkIdent (val : Name) : Ident :=
   ⟨Syntax.ident SourceInfo.none (toString val).toSubstring val []⟩
-
-@[inline] def mkNullNode (args : Array Syntax := #[]) : Syntax :=
-  mkNode nullKind args
 
 @[inline] def mkGroupNode (args : Array Syntax := #[]) : Syntax :=
   mkNode groupKind args
@@ -842,22 +837,30 @@ private partial def splitNameLitAux (ss : Substring) (acc : List Substring) : Li
 def splitNameLit (ss : Substring) : List Substring :=
   splitNameLitAux ss [] |>.reverse
 
+def _root_.Substring.toName (s : Substring) : Name :=
+  match splitNameLitAux s [] with
+  | [] => .anonymous
+  | comps => comps.foldr (init := Name.anonymous)
+    fun comp n =>
+      let comp := comp.toString
+      if isIdBeginEscape comp.front then
+        Name.mkStr n (comp.drop 1 |>.dropRight 1)
+      else if comp.front.isDigit then
+        if let some k := decodeNatLitVal? comp then
+          Name.mkNum n k
+        else
+          unreachable!
+      else
+        Name.mkStr n comp
+
+def _root_.String.toName (s : String) : Name :=
+  s.toSubstring.toName
+
 def decodeNameLit (s : String) : Option Name :=
   if s.get 0 == '`' then
-    match splitNameLitAux (s.toSubstring.drop 1) [] with
-    | [] => none
-    | comps => some <| comps.foldr (init := Name.anonymous)
-      fun comp n =>
-        let comp := comp.toString
-        if isIdBeginEscape comp.front then
-          Name.mkStr n (comp.drop 1 |>.dropRight 1)
-        else if comp.front.isDigit then
-          if let some k := decodeNatLitVal? comp then
-            Name.mkNum n k
-          else
-            unreachable!
-        else
-          Name.mkStr n comp
+    match (s.toSubstring.drop 1).toName with
+    | .anonymous => none
+    | name => some name
   else
     none
 
@@ -919,6 +922,9 @@ def getChar (s : CharLit) : Char :=
 def getName (s : NameLit) : Name :=
   s.raw.isNameLit?.getD .anonymous
 
+def getHygieneInfo (s : HygieneInfo) : Name :=
+  s.raw[0].getId
+
 namespace Compat
 
 scoped instance : CoeTail (Array Syntax) (Syntax.TSepArray k sep) where
@@ -928,12 +934,18 @@ end Compat
 
 end TSyntax
 
+def HygieneInfo.mkIdent (s : HygieneInfo) (val : Name) (canonical := false) : Ident :=
+  let src := s.raw[0]
+  let id := { extractMacroScopes src.getId with name := val.eraseMacroScopes }.review
+  ⟨Syntax.ident (SourceInfo.fromRef src canonical) (toString val).toSubstring id []⟩
+
 /-- Reflect a runtime datum back to surface syntax (best-effort). -/
 class Quote (α : Type) (k : SyntaxNodeKind := `term) where
   quote : α → TSyntax k
 
 export Quote (quote)
 
+set_option synthInstance.checkSynthOrder false in
 instance [Quote α k] [CoeHTCT (TSyntax k) (TSyntax [k'])] : Quote α k' := ⟨fun a => quote (k := k) a⟩
 
 instance : Quote Term := ⟨id⟩
@@ -1100,21 +1112,16 @@ instance : EmptyCollection (SepArray sep) where
 instance : EmptyCollection (TSepArray sep k) where
   emptyCollection := ⟨∅⟩
 
-/-
-We use `CoeTail` here instead of `Coe` to avoid a "loop" when computing `CoeTC`.
-The "loop" is interrupted using the maximum instance size threshold, but it is a performance bottleneck.
-The loop occurs because the predicate `isNewAnswer` is too imprecise.
--/
-instance : CoeTail (SepArray sep) (Array Syntax) where
+instance : CoeOut (SepArray sep) (Array Syntax) where
   coe := SepArray.getElems
 
-instance : Coe (TSepArray k sep) (TSyntaxArray k) where
+instance : CoeOut (TSepArray k sep) (TSyntaxArray k) where
   coe := TSepArray.getElems
 
 instance [Coe (TSyntax k) (TSyntax k')] : Coe (TSyntaxArray k) (TSyntaxArray k') where
   coe a := a.map Coe.coe
 
-instance : Coe (TSyntaxArray k) (Array Syntax) where
+instance : CoeOut (TSyntaxArray k) (Array Syntax) where
   coe a := a.raw
 
 instance : Coe Ident (TSyntax `Lean.Parser.Command.declId) where
@@ -1282,13 +1289,15 @@ namespace Parser.Tactic
 /-- `erw [rules]` is a shorthand for `rw (config := { transparency := .default }) [rules]`.
 This does rewriting up to unfolding of regular definitions (by comparison to regular `rw`
 which only unfolds `@[reducible]` definitions). -/
-macro "erw " s:rwRuleSeq loc:(location)? : tactic =>
+macro "erw" s:rwRuleSeq loc:(location)? : tactic =>
   `(tactic| rw (config := { transparency := .default }) $s $(loc)?)
 
-syntax simpAllKind := atomic("(" &"all") " := " &"true" ")"
-syntax dsimpKind   := atomic("(" &"dsimp") " := " &"true" ")"
+syntax simpAllKind := atomic(" (" &"all") " := " &"true" ")"
+syntax dsimpKind   := atomic(" (" &"dsimp") " := " &"true" ")"
 
-macro (name := declareSimpLikeTactic) doc?:(docComment)? "declare_simp_like_tactic" opt:((simpAllKind <|> dsimpKind)?) tacName:ident tacToken:str updateCfg:term : command => do
+macro (name := declareSimpLikeTactic) doc?:(docComment)?
+    "declare_simp_like_tactic" opt:((simpAllKind <|> dsimpKind)?)
+    ppSpace tacName:ident ppSpace tacToken:str ppSpace updateCfg:term : command => do
   let (kind, tkn, stx) ←
     if opt.raw.isNone then
       pure (← `(``simp), ← `("simp"), ← `($[$doc?:docComment]? syntax (name := $tacName) $tacToken:str (config)? (discharger)? (&" only")? (" [" (simpStar <|> simpErase <|> simpLemma),* "]")? (location)? : tactic))

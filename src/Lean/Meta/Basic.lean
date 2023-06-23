@@ -97,13 +97,6 @@ structure Config where
       the type of `t` with the goal target type. We claim this is not a hack and is defensible behavior because
       this last unification step is not really part of the term elaboration. -/
   assignSyntheticOpaque : Bool := false
-  /-- When `ignoreLevelDepth` is `false`, only universe level metavariables with `depth == metavariable` context depth
-      can be assigned.
-      We used to have `ignoreLevelDepth == false` always, but this setting produced counterintuitive behavior in a few
-      cases. Recall that universe levels are often ignored by users, they may not even be aware they exist.
-      We set `ignoreLevelMVarDepth := false` during `simp`. See comment at `withSimpConfig` and issue #1829.
-  -/
-  ignoreLevelMVarDepth  : Bool := true
   /-- Enable/Disable support for offset constraints such as `?x + 1 =?= e` -/
   offsetCnstrs          : Bool := true
   /-- Eta for structures configuration mode. -/
@@ -202,7 +195,7 @@ instance : Hashable InfoCacheKey :=
   ⟨fun ⟨transparency, expr, nargs⟩ => mixHash (hash transparency) <| mixHash (hash expr) (hash nargs)⟩
 end InfoCacheKey
 
-abbrev SynthInstanceCache := PersistentHashMap Expr (Option Expr)
+abbrev SynthInstanceCache := PersistentHashMap (LocalInstances × Expr) (Option Expr)
 
 abbrev InferTypeCache := PersistentExprStructMap Expr
 abbrev FunInfoCache   := PersistentHashMap InfoCacheKey FunInfo
@@ -268,7 +261,7 @@ structure State where
 structure SavedState where
   core        : Core.State
   meta        : State
-  deriving Inhabited
+  deriving Nonempty
 
 /--
   Contextual information for the `MetaM` monad.
@@ -613,11 +606,8 @@ def getLevelMVarDepth (mvarId : LMVarId) : MetaM Nat :=
 Return true if the given universe metavariable is "read-only".
 That is, its `depth` is different from the current metavariable context depth.
 -/
-def _root_.Lean.LMVarId.isReadOnly (mvarId : LMVarId) : MetaM Bool := do
-  if (← getConfig).ignoreLevelMVarDepth then
-    return false
-  else
-    return (← mvarId.getLevel) != (← getMCtx).depth
+def _root_.Lean.LMVarId.isReadOnly (mvarId : LMVarId) : MetaM Bool :=
+  return (← mvarId.getLevel) < (← getMCtx).levelAssignDepth
 
 @[deprecated LMVarId.isReadOnly]
 def isReadOnlyLevelMVar (mvarId : LMVarId) : MetaM Bool := do
@@ -874,47 +864,28 @@ private partial def isClassQuick? : Expr → MetaM (LOption Name)
   | .mdata _ e       => isClassQuick? e
   | .const n _       => isClassQuickConst? n
   | .mvar mvarId     => do
-    match (← getExprMVarAssignment? mvarId) with
-    | some val => isClassQuick? val
-    | none     => return .none
-  | .app f _         =>
+    let some val ← getExprMVarAssignment? mvarId | return .none
+    isClassQuick? val
+  | .app f _         => do
     match f.getAppFn with
-    | .const n .. => isClassQuickConst? n
-    | .lam ..     => return .undef
-    | _           => return .none
-
-def saveAndResetSynthInstanceCache : MetaM SynthInstanceCache := do
-  let savedSythInstance := (← get).cache.synthInstance
-  modifyCache fun c => { c with synthInstance := {} }
-  return savedSythInstance
-
-def restoreSynthInstanceCache (cache : SynthInstanceCache) : MetaM Unit :=
-  modifyCache fun c => { c with synthInstance := cache }
-
-@[inline] private def resettingSynthInstanceCacheImpl (x : MetaM α) : MetaM α := do
-  let savedSythInstance ← saveAndResetSynthInstanceCache
-  try x finally restoreSynthInstanceCache savedSythInstance
-
-/-- Reset `synthInstance` cache, execute `x`, and restore cache -/
-@[inline] def resettingSynthInstanceCache : n α → n α :=
-  mapMetaM resettingSynthInstanceCacheImpl
-
-@[inline] def resettingSynthInstanceCacheWhen (b : Bool) (x : n α) : n α :=
-  if b then resettingSynthInstanceCache x else x
+    | .const n ..  => isClassQuickConst? n
+    | .lam ..      => return .undef
+    | .mvar mvarId =>
+      let some val ← getExprMVarAssignment? mvarId | return .none
+      match val.getAppFn with
+      | .const n .. => isClassQuickConst? n
+      | _ => return .undef
+    | _            => return .none
 
 private def withNewLocalInstanceImp (className : Name) (fvar : Expr) (k : MetaM α) : MetaM α := do
   let localDecl ← getFVarLocalDecl fvar
   if localDecl.isImplementationDetail then
     k
   else
-    resettingSynthInstanceCache <|
-      withReader
-        (fun ctx => { ctx with localInstances := ctx.localInstances.push { className := className, fvar := fvar } })
-        k
+    withReader (fun ctx => { ctx with localInstances := ctx.localInstances.push { className := className, fvar := fvar } }) k
 
 /-- Add entry `{ className := className, fvar := fvar }` to localInstances,
-    and then execute continuation `k`.
-    It resets the type class cache using `resettingSynthInstanceCache`. -/
+    and then execute continuation `k`. -/
 def withNewLocalInstance (className : Name) (fvar : Expr) : n α → n α :=
   mapMetaM <| withNewLocalInstanceImp className fvar
 
@@ -929,9 +900,7 @@ mutual
     using free variables `fvars[j] ... fvars.back`, and execute `k`.
 
     - `isClassExpensive` is defined later.
-    - The type class chache is reset whenever a new local instance is found.
-    - `isClassExpensive` uses `whnf` which depends (indirectly) on the set of local instances.
-      Thus, each new local instance requires a new `resettingSynthInstanceCache`. -/
+    - `isClassExpensive` uses `whnf` which depends (indirectly) on the set of local instances. -/
   private partial def withNewLocalInstancesImp
       (fvars : Array Expr) (i : Nat) (k : MetaM α) : MetaM α := do
     if h : i < fvars.size then
@@ -1015,20 +984,27 @@ mutual
       else
         k #[] type
 
+
+  -- Helper method for isClassExpensive?
+  private partial def isClassApp? (type : Expr) (instantiated := false) : MetaM (Option Name) := do
+    match type.getAppFn with
+    | .const c _ =>
+      let env ← getEnv
+      if isClass env c then
+        return some c
+      else
+        -- Use whnf to make sure abbreviations are unfolded
+        match (← whnf type).getAppFn with
+        | .const c _ => if isClass env c then return some c else return none
+        | _ => return none
+    | .mvar .. =>
+      if instantiated then return none
+      isClassApp? (← instantiateMVars type) true
+    | _ => return none
+
   private partial def isClassExpensive? (type : Expr) : MetaM (Option Name) :=
     withReducible do -- when testing whether a type is a type class, we only unfold reducible constants.
-      forallTelescopeReducingAux type none fun _ type => do
-        let env ← getEnv
-        match type.getAppFn with
-        | .const c _ => do
-          if isClass env c then
-            return some c
-          else
-            -- make sure abbreviations are unfolded
-            match (← whnf type).getAppFn with
-            | .const c _ => return if isClass env c then some c else none
-            | _ => return none
-        | _ => return none
+      forallTelescopeReducingAux type none fun _ type => isClassApp? type
 
   private partial def isClassImp? (type : Expr) : MetaM (Option Name) := do
     match (← isClassQuick? type) with
@@ -1288,7 +1264,7 @@ def withLocalInstancesImp (decls : List LocalDecl) (k : MetaM α) : MetaM α := 
   if localInsts.size == size then
     k
   else
-    resettingSynthInstanceCache <| withReader (fun ctx => { ctx with localInstances := localInsts }) k
+    withReader (fun ctx => { ctx with localInstances := localInsts }) k
 
 /-- Register any local instance in `decls` -/
 def withLocalInstances (decls : List LocalDecl) : n α → n α :=
@@ -1313,9 +1289,9 @@ private def withExistingLocalDeclsImp (decls : List LocalDecl) (k : MetaM α) : 
 def withExistingLocalDecls (decls : List LocalDecl) : n α → n α :=
   mapMetaM <| withExistingLocalDeclsImp decls
 
-private def withNewMCtxDepthImp (x : MetaM α) : MetaM α := do
+private def withNewMCtxDepthImp (allowLevelAssignments : Bool) (x : MetaM α) : MetaM α := do
   let saved ← get
-  modify fun s => { s with mctx := s.mctx.incDepth, postponed := {} }
+  modify fun s => { s with mctx := s.mctx.incDepth allowLevelAssignments, postponed := {} }
   try
     x
   finally
@@ -1324,19 +1300,16 @@ private def withNewMCtxDepthImp (x : MetaM α) : MetaM α := do
 /--
   `withNewMCtxDepth k` executes `k` with a higher metavariable context depth,
   where metavariables created outside the `withNewMCtxDepth` (with a lower depth) cannot be assigned.
-  Note that this does not affect level metavariables (by default).
-  See the docstring of `isDefEq` for more information.
+  If `allowLevelAssignments` is set to true, then the level metavariable depth
+  is not increased, and level metavariables from the outer scope can be
+  assigned.  (This is used by TC synthesis.)
 -/
-def withNewMCtxDepth : n α → n α :=
-  mapMetaM withNewMCtxDepthImp
+def withNewMCtxDepth (k : n α) (allowLevelAssignments := false) : n α :=
+  mapMetaM (withNewMCtxDepthImp allowLevelAssignments) k
 
 private def withLocalContextImp (lctx : LocalContext) (localInsts : LocalInstances) (x : MetaM α) : MetaM α := do
-  let localInstsCurr ← getLocalInstances
   withReader (fun ctx => { ctx with lctx := lctx, localInstances := localInsts }) do
-    if localInsts == localInstsCurr then
-      x
-    else
-      resettingSynthInstanceCache x
+    x
 
 /--
   `withLCtx lctx localInsts k` replaces the local context and local instances, and then executes `k`.
@@ -1665,10 +1638,6 @@ def isExprDefEq (t s : Expr) : MetaM Bool :=
   The combinator `withNewMCtxDepth x` will bump the depth while executing `x`.
   So, `withNewMCtxDepth (isDefEq a b)` is `isDefEq` without any mvar assignment happening
   whereas `isDefEq a b` will assign any metavariables of the current depth in `a` and `b` to unify them.
-
-  By default, level metavariables can be assigned at any depth.
-  That is, `withNewMCtxDepth (isDefEq a b)` will still assign level mvars in `a` and `b`.
-  Setting the option `ignoreLevelMVarDepth := false` will disable this behavior.
 
   For matching (where only mvars in `b` should be assigned), we create the term inside the `withNewMCtxDepth`.
   For an example, see [Lean.Meta.Simp.tryTheoremWithExtraArgs?](https://github.com/leanprover/lean4/blob/master/src/Lean/Meta/Tactic/Simp/Rewrite.lean#L100-L106)

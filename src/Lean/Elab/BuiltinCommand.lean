@@ -10,6 +10,7 @@ import Lean.Elab.Eval
 import Lean.Elab.Command
 import Lean.Elab.Open
 import Lean.Elab.SetOption
+import Lean.PrettyPrinter
 
 namespace Lean.Elab.Command
 
@@ -51,14 +52,19 @@ private def popScopes (numScopes : Nat) : CommandElabM Unit :=
   for _ in [0:numScopes] do
     popScope
 
-private def checkAnonymousScope : List Scope → Bool
-  | { header := "", .. } :: _   => true
-  | _                           => false
+private def checkAnonymousScope : List Scope → Option Name
+  | { header := "", .. } :: _ => none
+  | { header := h, .. }  :: _ => some h
+  | _                         => some .anonymous -- should not happen
 
-private def checkEndHeader : Name → List Scope → Bool
-  | .anonymous, _                             => true
-  | .str p s,   { header := h, .. } :: scopes => h == s && checkEndHeader p scopes
-  | _,          _                             => false
+private def checkEndHeader : Name → List Scope → Option Name
+  | .anonymous, _ => none
+  | .str p s, { header := h, .. } :: scopes =>
+    if h == s then
+      (.str · s) <$> checkEndHeader p scopes
+    else
+      some h
+  | _, _ => some .anonymous -- should not happen
 
 @[builtin_command_elab «namespace»] def elabNamespace : CommandElab := fun stx =>
   match stx with
@@ -93,12 +99,12 @@ private def checkEndHeader : Name → List Scope → Bool
     throwError "invalid 'end', insufficient scopes"
   match header? with
   | none        =>
-    unless checkAnonymousScope scopes do
-      throwError "invalid 'end', name is missing"
+    if let some name := checkAnonymousScope scopes then
+      throwError "invalid 'end', name is missing (expected {name})"
   | some header =>
-    unless checkEndHeader header scopes do
+    if let some name := checkEndHeader header scopes then
       addCompletionInfo <| CompletionInfo.endSection stx (scopes.map fun scope => scope.header)
-      throwError "invalid 'end', name mismatch"
+      throwError "invalid 'end', name mismatch (expected {if name == `«» then `nothing else name})"
 
 private partial def elabChoiceAux (cmds : Array Syntax) (i : Nat) : CommandElabM Unit :=
   if h : i < cmds.size then
@@ -234,12 +240,24 @@ open Meta
 
 def elabCheckCore (ignoreStuckTC : Bool) : CommandElab
   | `(#check%$tk $term) => withoutModifyingEnv <| runTermElabM fun _ => Term.withDeclName `_check do
+    -- show signature for `#check id`/`#check @id`
+    if let `($_:ident) := term then
+      try
+        for c in (← resolveGlobalConstWithInfos term) do
+          addCompletionInfo <| .id term c (danglingDot := false) {} none
+          logInfoAt tk <| .ofPPFormat { pp := fun
+            | some ctx => ctx.runMetaM <| PrettyPrinter.ppSignature c
+            | none     => return f!"{c}"  -- should never happen
+          }
+          return
+      catch _ => pure ()  -- identifier might not be a constant but constant + projection
     let e ← Term.elabTerm term none
     Term.synthesizeSyntheticMVarsNoPostponing (ignoreStuckTC := ignoreStuckTC)
     let e ← Term.levelMVarToParam (← instantiateMVars e)
     let type ← inferType e
-    unless e.isSyntheticSorry do
-      logInfoAt tk m!"{e} : {type}"
+    if e.isSyntheticSorry then
+      return
+    logInfoAt tk m!"{e} : {type}"
   | _ => throwUnsupportedSyntax
 
 @[builtin_command_elab Lean.Parser.Command.check] def elabCheck : CommandElab := elabCheckCore (ignoreStuckTC := true)
@@ -424,5 +442,8 @@ opaque elabEval : CommandElab
 
 @[builtin_command_elab Parser.Command.import] def elabImport : CommandElab := fun _ =>
   throwError "invalid 'import' command, it must be used in the beginning of the file"
+
+@[builtin_command_elab Parser.Command.eoi] def elabEoi : CommandElab := fun _ =>
+  return
 
 end Lean.Elab.Command

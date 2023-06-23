@@ -307,6 +307,12 @@ inductive MatchResult where
   /-- Pattern is not quite sure yet; include unchanged in both branches -/
   | undecided
 
+instance : Repr MatchResult where
+  reprPrec
+    | .covered _ e, _ => f!"covered _ {repr e}"
+    | .uncovered,   _ => "uncovered"
+    | .undecided,   _ => "undecided"
+
 open MatchResult
 
 /-- All necessary information on a pattern head. -/
@@ -365,12 +371,11 @@ private partial def getHeadInfo (alt : Alt) : TermElabM HeadInfo :=
       if (getCanonicalAntiquot quoted)[3].isNone || pseudoKinds.all id then unconditionally rhsFn else pure {
         check   := shape ks none,
         onMatch := fun
-          | other _ => undecided
           | taken@(shape ks' sz) =>
             if ks' == ks then
               covered (adaptRhs rhsFn ∘ noOpMatchAdaptPats taken) (exhaustive := sz.isNone)
             else uncovered
-          | _ => uncovered,
+          | _ => undecided,
         doMatch := fun yes no => do
           let cond ← ks.foldlM (fun cond k => `(or $cond (Syntax.isOfKind __discr $(quote k)))) (← `(false))
           `(cond $cond $(← yes []) $(← no)),
@@ -379,13 +384,15 @@ private partial def getHeadInfo (alt : Alt) : TermElabM HeadInfo :=
     else if isAntiquotSplice quoted then throwErrorAt quoted "unexpected antiquotation splice"
     else if quoted.getArgs.size == 1 && isAntiquotSuffixSplice quoted[0] then
       let inner := getAntiquotSuffixSpliceInner quoted[0]
-      let anti := getAntiquotTerm (getCanonicalAntiquot inner)
       let ks := antiquotKinds inner |>.map (·.1)
-      unconditionally fun rhs => match antiquotSuffixSplice? quoted[0] with
-        | `optional => `(have $anti := Option.map (@TSyntax.mk $(quote ks)) (Syntax.getOptional? __discr); $rhs)
-        | `many     => `(have $anti := @TSyntaxArray.mk $(quote ks) (Syntax.getArgs __discr); $rhs)
-        | `sepBy    => `(have $anti := @TSepArray.mk $(quote ks) $(quote <| getSepFromSplice quoted[0]) (Syntax.getArgs __discr); $rhs)
-        | k         => throwErrorAt quoted "invalid antiquotation suffix splice kind '{k}'"
+      unconditionally <| match getAntiquotTerm (getCanonicalAntiquot inner) with
+        | `(_)         => pure
+        | `($id:ident) => fun rhs => match antiquotSuffixSplice? quoted[0] with
+          | `optional => `(have $id := Option.map (@TSyntax.mk $(quote ks)) (Syntax.getOptional? __discr); $rhs)
+          | `many     => `(have $id := @TSyntaxArray.mk $(quote ks) (Syntax.getArgs __discr); $rhs)
+          | `sepBy    => `(have $id := @TSepArray.mk $(quote ks) $(quote <| getSepFromSplice quoted[0]) (Syntax.getArgs __discr); $rhs)
+          | k         => throwErrorAt quoted "invalid antiquotation suffix splice kind '{k}'"
+        | anti         => fun _   => throwErrorAt anti "unsupported antiquotation kind in pattern"
     else if quoted.getArgs.size == 1 && isAntiquotSplice quoted[0] then pure {
       check   := other pat,
       onMatch := fun
@@ -443,7 +450,6 @@ private partial def getHeadInfo (alt : Alt) : TermElabM HeadInfo :=
       pure {
         check    := slice idx numSuffix
         onMatch  := fun
-          | other _ => undecided
           | slice p s =>
             if p == idx && s == numSuffix then
               let argPats := quoted.getArgs.mapIdx fun i arg =>
@@ -451,12 +457,12 @@ private partial def getHeadInfo (alt : Alt) : TermElabM HeadInfo :=
                 Unhygienic.run `(`($(arg)))
               covered (fun (pats, rhs) => pure (argPats.toList ++ pats, rhs)) (exhaustive := true)
             else uncovered
-          | _ => uncovered
+          | _ => undecided
         doMatch := fun yes no => do
           let prefixDiscrs ← (List.range idx).mapM (`(Syntax.getArg __discr $(quote ·)))
-          let sliceDiscr ← `(mkNullNode (__discr.getArgs.extract $(quote idx) (__discr.getNumArgs - $(quote numSuffix))))
+          let sliceDiscr ← `(mkNullNode (__discr.getArgs.extract $(quote idx) (Nat.sub __discr.getNumArgs $(quote numSuffix))))
           let suffixDiscrs ← (List.range numSuffix).mapM fun i =>
-            `(Syntax.getArg __discr (__discr.getNumArgs - $(quote (numSuffix - i))))
+            `(Syntax.getArg __discr (Nat.sub __discr.getNumArgs $(quote (numSuffix - i))))
           `(ite (GE.ge __discr.getNumArgs $(quote (quoted.getNumArgs - 1)))
               $(← yes (prefixDiscrs ++ sliceDiscr :: suffixDiscrs))
               $(← no))
@@ -480,16 +486,19 @@ private partial def getHeadInfo (alt : Alt) : TermElabM HeadInfo :=
             shape [kind] argPats.size,
         onMatch := fun
           | other stx' =>
-            if (quoted.isIdent || lit) && quoted == stx' then
-              covered pure (exhaustive := true)
+            if quoted.isIdent || lit then
+              if quoted == stx' then
+                covered pure (exhaustive := true)
+              else
+                uncovered
             else
-              uncovered
+              undecided
           | shape ks sz =>
             if ks == [kind] && sz == argPats.size then
               covered (fun (pats, rhs) => pure (argPats.toList ++ pats, rhs)) (exhaustive := true)
             else
               uncovered
-          | _ => uncovered,
+          | _ => undecided,
         doMatch := fun yes no => do
           let (cond, newDiscrs) ← if lit then
             let cond ← `(Syntax.matchesLit __discr $(quote kind) $(quote (isLit? kind quoted).get!))
@@ -539,13 +548,15 @@ private partial def compileStxMatch (discrs : List Term) (alts : List Alt) : Ter
    pure Syntax.missing
   | discr::discrs, alt::alts    => do
     let info ← getHeadInfo alt
-    let alts ← (alt::alts).mapM fun alt => return ((← getHeadInfo alt).onMatch info.check, alt)
+    let alts := (info.onMatch info.check, alt) :: (← alts.mapM fun alt =>
+      return ((← getHeadInfo alt).onMatch info.check, alt))
     let mut yesAlts           := #[]
     let mut undecidedAlts     := #[]
     let mut nonExhaustiveAlts := #[]
     let mut floatedLetDecls   := #[]
     for (x, alt') in alts do
       let mut alt' := alt'
+      trace[Elab.match_syntax.onMatch] "{alt'} ~> {repr x}"
       match x with
       | covered f exh =>
         -- we can only factor out a common check if there are no undecided patterns in between;
@@ -673,6 +684,7 @@ def match_syntax.expand (stx : Syntax) : TermElabM Syntax := do
 
 builtin_initialize
   registerTraceClass `Elab.match_syntax
-  registerTraceClass `Elab.match_syntax.result
+  registerTraceClass `Elab.match_syntax.alt (inherited := true)
+  registerTraceClass `Elab.match_syntax.result (inherited := true)
 
 end Lean.Elab.Term.Quotation

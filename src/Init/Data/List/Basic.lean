@@ -98,7 +98,7 @@ instance : Append (List α) := ⟨List.append⟩
 
 @[simp] theorem cons_append (a : α) (as bs : List α) : (a::as) ++ bs = a::(as ++ bs) := rfl
 
-@[simp] theorem List.append_eq (as bs : List α) : List.append as bs = as ++ bs := rfl
+@[simp] theorem append_eq (as bs : List α) : List.append as bs = as ++ bs := rfl
 
 theorem append_assoc (as bs cs : List α) : (as ++ bs) ++ cs = as ++ (bs ++ cs) := by
   induction as with
@@ -285,7 +285,7 @@ def dropWhile (p : α → Bool) : List α → List α
   | []   => []
   | a::l => match p a with
     | true  => dropWhile p l
-    | false =>  a::l
+    | false => a::l
 
 /--
 `O(|l|)`. `find? p l` returns the first element for which `p` returns true,
@@ -434,17 +434,17 @@ where
 such that adjacent elements are related by `R`.
 
 * `groupBy (·==·) [1, 1, 2, 2, 2, 3, 2] = [[1, 1], [2, 2, 2], [3], [2]]`
-* `groupBy (·<·) [1, 2, 5, 4, 5, 4, 1] = [[1, 2, 5], [4, 5], [4], [1]]`
+* `groupBy (·<·) [1, 2, 5, 4, 5, 1, 4] = [[1, 2, 5], [4, 5], [1, 4]]`
 -/
 @[specialize] def groupBy (R : α → α → Bool) : List α → List (List α)
   | []    => []
-  | a::as => loop as [[a]]
+  | a::as => loop as a [] []
 where
-  @[specialize] loop : List α → List (List α) → List (List α)
-  | a::as, (ag::g)::gs => match R ag a with
-    | true  => loop as ((a::ag::g)::gs)
-    | false => loop as ([a]::(ag::g).reverse::gs)
-  | _, gs => gs.reverse
+  @[specialize] loop : List α → α → List α → List (List α) → List (List α)
+  | a::as, ag, g, gs => match R ag a with
+    | true  => loop as a (ag::g) gs
+    | false => loop as a [] ((ag::g).reverse::gs)
+  | [], ag, g, gs => ((ag::g).reverse::gs).reverse
 
 /--
 `O(|l|)`. `lookup a l` treats `l : List (α × β)` like an association list,
@@ -524,7 +524,7 @@ def takeWhile (p : α → Bool) : (xs : List α) → List α
 
 /--
 `O(|l|)`. Returns true if `p` is true for every element of `l`.
-* `any p [a, b, c] = p a && p b && p c`
+* `all p [a, b, c] = p a && p b && p c`
 -/
 @[inline] def all (l : List α) (p : α → Bool) : Bool :=
   foldr (fun a r => p a && r) true l
@@ -814,9 +814,9 @@ def maximum? [Max α] : List α → Option α
 
 /--
 Returns the smallest element of the list, if it is not empty.
-* `[].maximum? = none`
-* `[4].maximum? = some 4`
-* `[1, 4, 2, 10, 6].maximum? = some 1`
+* `[].minimum? = none`
+* `[4].minimum? = some 4`
+* `[1, 4, 2, 10, 6].minimum? = some 1`
 -/
 def minimum? [Min α] : List α → Option α
   | []    => none

@@ -1,4 +1,4 @@
-{ pkgs, nix, ... } @ args:
+{ src, pkgs, nix, ... } @ args:
 with pkgs;
 let
   nix-pinned = writeShellScriptBin "nix" ''
@@ -29,7 +29,7 @@ let
   stdenv' = if stdenv.isLinux then useGoldLinker stdenv else stdenv;
   lean = callPackage (import ./bootstrap.nix) (args // {
     stdenv = overrideCC stdenv' cc;
-    inherit buildLeanPackage llvmPackages;
+    inherit src buildLeanPackage llvmPackages;
   });
   makeOverridableLeanPackage = f:
     let newF = origArgs: f origArgs // {
@@ -52,7 +52,10 @@ let
     src = args.lean4-mode;
     packageRequires = with pkgs.emacsPackages.melpaPackages; [ dash f flycheck magit-section lsp-mode s ];
     recipe = pkgs.writeText "recipe" ''
-      (lean4-mode :repo "leanprover/lean4-mode" :fetcher github)
+      (lean4-mode
+       :repo "leanprover/lean4-mode"
+       :fetcher github
+       :files ("*.el" "data"))
     '';
   };
   lean-emacs = emacsWithPackages [ lean4-mode ];

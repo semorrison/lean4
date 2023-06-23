@@ -365,13 +365,10 @@ structure Task (α : Type u) : Type u where
   /-- If `task : Task α` then `task.get : α` blocks the current thread until the
   value is available, and then returns the result of the task. -/
   get : α
-  deriving Inhabited
+  deriving Inhabited, Nonempty
 
 attribute [extern "lean_task_pure"] Task.pure
 attribute [extern "lean_task_get_own"] Task.get
-
-instance : [Nonempty α] → Nonempty (Task α)
-  | ⟨x⟩ => ⟨.pure x⟩
 
 namespace Task
 /-- Task priority. Tasks with higher priority will always be scheduled before ones with lower priority. -/
@@ -799,6 +796,13 @@ theorem if_neg {c : Prop} {h : Decidable c} (hnc : ¬c) {α : Sort u} {t e : α}
   match h with
   | isTrue hc   => absurd hc hnc
   | isFalse _   => rfl
+
+/-- Split an if-then-else into cases. The `split` tactic is generally easier to use than this theorem. -/
+def iteInduction {c} [inst : Decidable c] {motive : α → Sort _} {t e : α}
+    (hpos : c → motive t) (hneg : ¬c → motive e) : motive (ite c t e) :=
+  match inst with
+  | isTrue h => hpos h
+  | isFalse h => hneg h
 
 theorem dif_pos {c : Prop} {h : Decidable c} (hc : c) {α : Sort u} {t : c → α} {e : ¬ c → α} : (dite c t e) = t hc :=
   match h with
@@ -1347,7 +1351,8 @@ then it lifts to a function on `Quotient s` such that `lift f h (mk a) = f a`.
 protected abbrev lift {α : Sort u} {β : Sort v} {s : Setoid α} (f : α → β) : ((a b : α) → a ≈ b → f a = f b) → Quotient s → β :=
   Quot.lift f
 
-protected theorem ind {α : Sort u} {s : Setoid α} {motive : Quotient s → Prop} : ((a : α) → motive (Quotient.mk s a)) → (q : Quot Setoid.r) → motive q :=
+/-- The analogue of `Quot.ind`: every element of `Quotient s` is of the form `Quotient.mk s a`. -/
+protected theorem ind {α : Sort u} {s : Setoid α} {motive : Quotient s → Prop} : ((a : α) → motive (Quotient.mk s a)) → (q : Quotient s) → motive q :=
   Quot.ind
 
 /--
@@ -1357,6 +1362,7 @@ then it lifts to a function on `Quotient s` such that `lift (mk a) f h = f a`.
 protected abbrev liftOn {α : Sort u} {β : Sort v} {s : Setoid α} (q : Quotient s) (f : α → β) (c : (a b : α) → a ≈ b → f a = f b) : β :=
   Quot.liftOn q f c
 
+/-- The analogue of `Quot.inductionOn`: every element of `Quotient s` is of the form `Quotient.mk s a`. -/
 @[elab_as_elim]
 protected theorem inductionOn {α : Sort u} {s : Setoid α} {motive : Quotient s → Prop}
     (q : Quotient s)

@@ -12,7 +12,7 @@ on:
     - cron: '0 7 * * *'  # 8AM CET/11PM PT
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: true
 
 jobs:
@@ -35,7 +35,7 @@ jobs:
             LEAN_VERSION_STRING="nightly-$(date -u +%F)"
             # do nothing if commit already has a different tag
             if [[ $(git name-rev --name-only --tags --no-undefined HEAD 2> /dev/null || echo $LEAN_VERSION_STRING) == $LEAN_VERSION_STRING ]]; then
-              echo "::set-output name=nightly::$LEAN_VERSION_STRING"
+              echo "nightly=$LEAN_VERSION_STRING" >> $GITHUB_OUTPUT
             fi
           fi
 
@@ -97,7 +97,7 @@ jobs:
             os: windows-2022
             release: true
             shell: msys2 {0}
-            CMAKE_OPTIONS: -G "Unix Makefiles"
+            CMAKE_OPTIONS: -G "Unix Makefiles" -DUSE_GMP=OFF
             # for reasons unknown, interactivetests are flaky on Windows
             CTEST_OPTIONS: --repeat until-pass:2
             llvm-url: https://github.com/leanprover/lean-llvm/releases/download/15.0.1/lean-llvm-x86_64-w64-windows-gnu.tar.zst
@@ -132,6 +132,8 @@ jobs:
           submodules: true
       - name: Install Nix
         uses: cachix/install-nix-action@v18
+        with:
+          install_url: https://releases.nixos.org/nix/nix-2.12.0/install
         if: matrix.os == 'ubuntu-latest'
       - name: Install MSYS2
         uses: msys2/setup-msys2@v2

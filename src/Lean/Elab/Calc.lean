@@ -44,32 +44,74 @@ def mkCalcTrans (result resultType step stepType : Expr) : MetaM (Expr × Expr) 
   | _ => throwError "invalid 'calc' step, failed to synthesize `Trans` instance{indentExpr selfType}"
 
 /--
-  Elaborate `calc`-steps
+Adds a type annotation to a hole that occurs immediately at the beginning of the term.
+This is so that coercions can trigger when elaborating the term.
+See https://github.com/leanprover/lean4/issues/2040 for futher rationale.
+
+- `_ < 3` is annotated
+- `(_) < 3` is not, because it occurs after an atom
+- in `_ < _` only the first one is annotated
+- `_ + 2 < 3` is annotated (not the best heuristic, ideally we'd like to annotate `_ + 2`)
+- `lt _ 3` is not, because it occurs after an identifier
 -/
-def elabCalcSteps (steps : Array Syntax) : TermElabM Expr := do
-  let mut proofs := #[]
-  let mut types  := #[]
-  for step in steps do
-    let type  ← elabType step[0]
-    let some (_, lhs, _) ← getCalcRelation? type |
-      throwErrorAt step[0] "invalid 'calc' step, relation expected{indentExpr type}"
-    if types.size > 0 then
-      let some (_, _, prevRhs) ← getCalcRelation? types.back | unreachable!
+partial def annotateFirstHoleWithType (t : Term) (type : Expr) : TermElabM Term :=
+  -- The state is true if we should annotate the immediately next hole with the type.
+  return ⟨← StateT.run' (go t) true⟩
+where
+  go (t : Syntax) := do
+    unless ← get do return t
+    match t with
+    | .node _ ``Lean.Parser.Term.hole _ =>
+      set false
+      `(($(⟨t⟩) : $(← exprToSyntax type)))
+    | .node i k as => return .node i k (← as.mapM go)
+    | _ => set false; return t
+
+def getCalcFirstStep (step0 : TSyntax ``calcFirstStep) : TermElabM (TSyntax ``calcStep) :=
+  match step0  with
+  | `(calcFirstStep| $term:term) =>
+    `(calcStep| $term = _ := rfl)
+  | `(calcFirstStep| $term := $proof) =>
+    `(calcStep| $term := $proof)
+  | _ => throwUnsupportedSyntax
+
+def getCalcSteps (steps : TSyntax ``calcSteps) : TermElabM (Array (TSyntax ``calcStep)) :=
+  match steps with
+  | `(calcSteps| $step0:calcFirstStep $rest*) => do
+    let step0 ← getCalcFirstStep step0
+    pure (#[step0] ++ rest)
+  | _ => unreachable!
+
+def elabCalcSteps (steps : TSyntax ``calcSteps) : TermElabM Expr := do
+  let mut result? := none
+  let mut prevRhs? := none
+  for step in ← getCalcSteps steps do
+    let `(calcStep| $pred := $proofTerm) := step | unreachable!
+    let type ← elabType <| ← do
+      if let some prevRhs := prevRhs? then
+        annotateFirstHoleWithType pred (← inferType prevRhs)
+      else
+        pure pred
+    let some (_, lhs, rhs) ← getCalcRelation? type |
+      throwErrorAt pred "invalid 'calc' step, relation expected{indentExpr type}"
+    if let some prevRhs := prevRhs? then
       unless (← isDefEqGuarded lhs prevRhs) do
-        throwErrorAt step[0] "invalid 'calc' step, left-hand-side is {indentD m!"{lhs} : {← inferType lhs}"}\nprevious right-hand-side is{indentD m!"{prevRhs} : {← inferType prevRhs}"}"
-    types := types.push type
-    let proof ← elabTermEnsuringType step[2] type
-    synthesizeSyntheticMVars
-    proofs := proofs.push proof
-  let mut result := proofs[0]!
-  let mut resultType := types[0]!
-  for i in [1:proofs.size] do
-    (result, resultType) ← withRef steps[i]! <| mkCalcTrans result resultType proofs[i]! types[i]!
-  return result
+        throwErrorAt pred "invalid 'calc' step, left-hand-side is{indentD m!"{lhs} : {← inferType lhs}"}\nprevious right-hand-side is{indentD m!"{prevRhs} : {← inferType prevRhs}"}" -- "
+    let proof ← withFreshMacroScope do elabTermEnsuringType proofTerm type
+    result? := some <| ← do
+      if let some (result, resultType) := result? then
+        synthesizeSyntheticMVarsUsingDefault
+        withRef pred do mkCalcTrans result resultType proof type
+      else
+        pure (proof, type)
+    prevRhs? := rhs
+  return result?.get!.1
 
 /-- Elaborator for the `calc` term mode variant. -/
 @[builtin_term_elab «calc»]
-def elabCalc : TermElab :=  fun stx expectedType? => do
-  let steps := #[stx[1]] ++ stx[2].getArgs
+def elabCalc : TermElab := fun stx expectedType? => do
+  let steps : TSyntax ``calcSteps := ⟨stx[1]⟩
   let result ← elabCalcSteps steps
-  ensureHasType expectedType? result
+  synthesizeSyntheticMVarsUsingDefault
+  let result ← ensureHasType expectedType? result
+  return result

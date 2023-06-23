@@ -126,8 +126,7 @@ def pushLine : FormatterM Unit :=
   pushWhitespace Format.line
 
 def pushAlign (force : Bool) : FormatterM Unit :=
-  -- don't reset leadWord because .align may introduce zero space
-  push (.align force)
+  pushWhitespace (.align force)
 
 /-- Execute `x` at the right-most child of the current node, if any, then advance to the left. -/
 def visitArgs (x : FormatterM Unit) : FormatterM Unit := do
@@ -490,6 +489,7 @@ def sepByNoAntiquot.formatter (p pSep : Formatter) : Formatter := do
 @[combinator_formatter skip] def skip.formatter : Formatter := pure ()
 
 @[combinator_formatter pushNone] def pushNone.formatter : Formatter := goLeft
+@[combinator_formatter hygieneInfoNoAntiquot] def hygieneInfoNoAntiquot.formatter : Formatter := goLeft
 
 @[combinator_formatter interpolatedStr]
 def interpolatedStr.formatter (p : Formatter) : Formatter := do
@@ -515,14 +515,28 @@ instance : Coe (Formatter → Formatter → Formatter) FormatterAliasValue := { 
 end Formatter
 open Formatter
 
+register_builtin_option pp.oneline : Bool := {
+  defValue := false
+  group    := "pp"
+  descr    := "(pretty printer) elide all but first line of pretty printer output"
+}
+
 def format (formatter : Formatter) (stx : Syntax) : CoreM Format := do
   trace[PrettyPrinter.format.input] "{Std.format stx}"
   let options ← getOptions
   let table ← Parser.builtinTokenTable.get
   catchInternalId backtrackExceptionId
     (do
-      let (_, st) ← (concat formatter { table := table, options := options }).run { stxTrav := Syntax.Traverser.fromSyntax stx };
-      pure $ Format.fill $ st.stack.get! 0)
+      let (_, st) ← (concat formatter { table, options }).run { stxTrav := .fromSyntax stx }
+      let mut f := st.stack[0]!
+      if pp.oneline.get options then
+        let mut s := f.pretty' options |>.trim
+        let lineEnd := s.find (· == '\n')
+        if lineEnd < s.endPos then
+          s := s.extract 0 lineEnd ++ " [...]"
+        -- TODO: preserve `Format.tag`s?
+        f := s
+      return .fill f)
     (fun _ => throwError "format: uncaught backtrack exception")
 
 def formatCategory (cat : Name) := format <| categoryFormatter cat

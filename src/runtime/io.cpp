@@ -86,7 +86,7 @@ static obj_res mk_file_not_found_error(b_obj_arg fname) {
 static lean_external_class * g_io_handle_external_class = nullptr;
 
 static void io_handle_finalizer(void * h) {
-    fclose(static_cast<FILE *>(h));
+    lean_always_assert(fclose(static_cast<FILE *>(h)) == 0);
 }
 
 static void io_handle_foreach(void * /* mod */, b_obj_arg /* fn */) {
@@ -253,9 +253,36 @@ extern "C" LEAN_EXPORT obj_res lean_chmod (b_obj_arg filename, uint32_t mode, ob
     }
 }
 
-/* Handle.mk (filename : @& String) (mode : @& String) : IO Handle */
-extern "C" LEAN_EXPORT obj_res lean_io_prim_handle_mk(b_obj_arg filename, b_obj_arg modeStr, obj_arg /* w */) {
-    FILE *fp = fopen(lean_string_cstr(filename), lean_string_cstr(modeStr));
+/* Handle.mk (filename : @& String) (mode : FS.Mode) : IO Handle */
+extern "C" LEAN_EXPORT obj_res lean_io_prim_handle_mk(b_obj_arg filename, uint8 mode, obj_arg /* w */) {
+    int flags = 0;
+#ifdef LEAN_WINDOWS
+    // do not translate line endings
+    flags |= O_BINARY;
+    // do not inherit across process creation
+    flags |= O_NOINHERIT;
+#else
+    // do not inherit across process creation
+    flags |= O_CLOEXEC;
+#endif
+    switch (mode) {
+    case 0: flags |= O_RDONLY; break;  // read
+    case 1: flags |= O_WRONLY | O_CREAT | O_TRUNC; break;  // write
+    case 2: flags |= O_RDWR; break;  // readWrite
+    case 3: flags |= O_WRONLY | O_CREAT | O_APPEND; break;  // append
+    }
+    int fd = open(lean_string_cstr(filename), flags, 0666);
+    if (fd == -1) {
+        return io_result_mk_error(decode_io_error(errno, filename));
+    }
+    char const * fp_mode;
+    switch (mode) {
+    case 0: fp_mode = "r"; break;  // read
+    case 1: fp_mode = "w"; break;  // write
+    case 2: fp_mode = "r+"; break;  // readWrite
+    case 3: fp_mode = "a"; break;  // append
+    }
+    FILE * fp = fdopen(fd, fp_mode);
     if (!fp) {
         return io_result_mk_error(decode_io_error(errno, filename));
     } else {
@@ -309,8 +336,6 @@ extern "C" LEAN_EXPORT obj_res lean_io_prim_handle_write(b_obj_arg h, b_obj_arg 
     }
 }
 
-static object * g_io_error_getline = nullptr;
-
 /*
   Handle.getLine : (@& Handle) → IO Unit
   The line returned by `lean_io_prim_handle_get_line`
@@ -338,7 +363,7 @@ extern "C" LEAN_EXPORT obj_res lean_io_prim_handle_get_line(b_obj_arg h, obj_arg
             clearerr(fp);
             return io_result_mk_ok(mk_string(result));
         } else {
-            return io_result_mk_error(g_io_error_getline);
+            return io_result_mk_error(decode_io_error(errno, nullptr));
         }
         first = false;
     }
@@ -385,6 +410,7 @@ extern "C" LEAN_EXPORT obj_res lean_io_get_random_bytes (size_t nbytes, obj_arg 
 
     obj_res res = lean_alloc_sarray(1, 0, nbytes);
     size_t remain = nbytes;
+    uint8_t *dst = lean_sarray_cptr(res);
 
     while (remain > 0) {
 #if defined(LEAN_WINDOWS)
@@ -392,7 +418,7 @@ extern "C" LEAN_EXPORT obj_res lean_io_get_random_bytes (size_t nbytes, obj_arg 
         size_t read_sz = std::min(remain, static_cast<size_t>(std::numeric_limits<uint32_t>::max()));
         NTSTATUS status = BCryptGenRandom(
             NULL,
-            lean_sarray_cptr(res),
+            dst,
             static_cast<ULONG>(read_sz),
             BCRYPT_USE_SYSTEM_PREFERRED_RNG
         );
@@ -401,6 +427,7 @@ extern "C" LEAN_EXPORT obj_res lean_io_get_random_bytes (size_t nbytes, obj_arg 
             return io_result_mk_error("BCryptGenRandom failed");
         }
         remain -= read_sz;
+        dst += read_sz;
 #else
     #if defined(LEAN_EMSCRIPTEN)
         // `Crypto.getRandomValues` documents `dest` should be at most 65536 bytes.
@@ -408,7 +435,7 @@ extern "C" LEAN_EXPORT obj_res lean_io_get_random_bytes (size_t nbytes, obj_arg 
     #else
         size_t read_sz = remain;
     #endif
-        ssize_t nread = read(fd_urandom, lean_sarray_cptr(res), read_sz);
+        ssize_t nread = read(fd_urandom, dst, read_sz);
         if (nread < 0) {
             if (errno != EINTR) {
                 close(fd_urandom);
@@ -417,6 +444,7 @@ extern "C" LEAN_EXPORT obj_res lean_io_get_random_bytes (size_t nbytes, obj_arg 
             }
         } else {
             remain -= nread;
+            dst += nread;
         }
 #endif
     }
@@ -887,8 +915,6 @@ extern "C" LEAN_EXPORT obj_res lean_io_exit(uint8_t code, obj_arg /* w */) {
 void initialize_io() {
     g_io_error_nullptr_read = lean_mk_io_user_error(mk_string("null reference read"));
     mark_persistent(g_io_error_nullptr_read);
-    g_io_error_getline = lean_mk_io_user_error(mk_string("getLine failed"));
-    mark_persistent(g_io_error_getline);
     g_io_handle_external_class = lean_register_external_class(io_handle_finalizer, io_handle_foreach);
 #if defined(LEAN_WINDOWS)
     _setmode(_fileno(stdout), _O_BINARY);

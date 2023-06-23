@@ -110,7 +110,7 @@ def TermInfo.format (ctx : ContextInfo) (info : TermInfo) : IO Format := do
 def CompletionInfo.format (ctx : ContextInfo) (info : CompletionInfo) : IO Format :=
   match info with
   | .dot i (expectedType? := expectedType?) .. => return f!"[.] {← i.format ctx} : {expectedType?}"
-  | .id stx _ _ lctx expectedType? => ctx.runMetaM lctx do return f!"[.] {stx} : {expectedType?} @ {formatStxRange ctx info.stx}"
+  | .id stx _ _ lctx expectedType? => ctx.runMetaM lctx do return f!"[.] {← ctx.ppSyntax lctx stx} : {expectedType?} @ {formatStxRange ctx info.stx}"
   | _ => return f!"[.] {info.stx} @ {formatStxRange ctx info.stx}"
 
 def CommandInfo.format (ctx : ContextInfo) (info : CommandInfo) : IO Format := do
@@ -145,7 +145,7 @@ def UserWidgetInfo.format (info : UserWidgetInfo) : Format :=
   f!"UserWidget {info.widgetId}\n{Std.ToFormat.format info.props}"
 
 def FVarAliasInfo.format (info : FVarAliasInfo) : Format :=
-  f!"FVarAlias {info.id.name} -> {info.baseId.name}"
+  f!"FVarAlias {info.userName.eraseMacroScopes}"
 
 def FieldRedeclInfo.format (ctx : ContextInfo) (info : FieldRedeclInfo) : Format :=
   f!"FieldRedecl @ {formatStxRange ctx info.stx}"

@@ -15,7 +15,7 @@ import Lean.Server.FileWorker.RequestHandling
 /-! Registers all widget-related RPC procedures. -/
 
 namespace Lean.Widget
-open Server
+open Server Lean.Elab
 
 structure MsgToInteractive where
   msg : WithRpcRef MessageData
@@ -46,25 +46,25 @@ The intended usage of this is for the infoview to pass the `InfoWithCtx` which
 was stored for a particular `SubexprInfo` tag in a `TaggedText` generated with `ppExprTagged`.
  -/
 def makePopup : WithRpcRef InfoWithCtx → RequestM (RequestTask InfoPopup)
-    | ⟨i⟩ => RequestM.asTask do
-      i.ctx.runMetaM i.info.lctx do
-        let type? ← match (← i.info.type?) with
-          | some type => some <$> ppExprTagged type
-          | none => pure none
-        let exprExplicit? ← match i.info with
-          | Elab.Info.ofTermInfo ti =>
-            let ti ← ppExprTagged ti.expr (explicit := true)
-            -- remove top-level expression highlight
-            pure <| some <| match ti with
-              | .tag _ tt => tt
-              | tt => tt
-          | Elab.Info.ofFieldInfo fi => pure <| some <| TaggedText.text fi.fieldName.toString
-          | _ => pure none
-        return {
-          type := type?
-          exprExplicit := exprExplicit?
-          doc := ← i.info.docString? : InfoPopup
-        }
+  | ⟨i⟩ => RequestM.asTask do
+    i.ctx.runMetaM i.info.lctx do
+      let type? ← match (← i.info.type?) with
+        | some type => some <$> ppExprTagged type
+        | none => pure none
+      let exprExplicit? ← match i.info with
+        | Elab.Info.ofTermInfo ti =>
+          let ti ← ppExprTagged ti.expr (explicit := true)
+          -- remove top-level expression highlight
+          pure <| some <| match ti with
+            | .tag _ tt => tt
+            | tt => tt
+        | Elab.Info.ofFieldInfo fi => pure <| some <| TaggedText.text fi.fieldName.toString
+        | _ => pure none
+      return {
+        type := type?
+        exprExplicit := exprExplicit?
+        doc := ← i.info.docString? : InfoPopup
+      }
 
 builtin_initialize
   registerBuiltinRpcProcedure
@@ -127,7 +127,7 @@ builtin_initialize
     (Array Lsp.LocationLink)
     fun ⟨kind, ⟨i⟩⟩ => RequestM.asTask do
       let rc ← read
-      let ls ← FileWorker.locationLinksOfInfo kind i.ctx i.info
+      let ls ← FileWorker.locationLinksOfInfo kind i
       if !ls.isEmpty then return ls
       -- TODO(WN): unify handling of delab'd (infoview) and elab'd (editor) applications
       let .ofTermInfo ti := i.info | return #[]

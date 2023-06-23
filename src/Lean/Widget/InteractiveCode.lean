@@ -6,6 +6,7 @@ Authors: Wojciech Nawrocki
 -/
 import Lean.PrettyPrinter
 import Lean.Server.Rpc.Basic
+import Lean.Server.InfoUtils
 import Lean.Widget.TaggedText
 import Lean.Widget.Basic
 
@@ -28,15 +29,16 @@ inductive DiffTag where
 /-- Information about a subexpression within delaborated code. -/
 structure SubexprInfo where
   /-- The `Elab.Info` node with the semantics of this part of the output. -/
-  info : WithRpcRef InfoWithCtx
-  /-- The position of this subexpression within the top-level expression.
-  See `Lean.SubExpr`. -/
+  info : WithRpcRef Lean.Elab.InfoWithCtx
+  /-- The position of this subexpression within the top-level expression. See `Lean.SubExpr`. -/
   subexprPos : Lean.SubExpr.Pos
   -- TODO(WN): add fields for semantic highlighting
   -- kind : Lsp.SymbolKind
-  /-- Ask the renderer to highlight this node in the given color. -/
+  /-- In certain situations such as when goal states change between positions in a tactic-mode proof,
+  we can show subexpression-level diffs between two expressions. This field asks the renderer to
+  display the subexpression as in a diff view (e.g. red/green like `git diff`). -/
   diffStatus? : Option DiffTag := none
-  deriving Inhabited, RpcEncodable
+  deriving RpcEncodable
 
 /-- Pretty-printed syntax (usually but not necessarily an `Expr`) with embedded `Info`s. -/
 abbrev CodeWithInfos := TaggedText SubexprInfo
@@ -53,7 +55,7 @@ def CodeWithInfos.pretty (tt : CodeWithInfos) :=
   tt.stripTags
 
 def SubexprInfo.withDiffTag (tag : DiffTag) (c : SubexprInfo) : SubexprInfo :=
-  {c with diffStatus? := some tag }
+  { c with diffStatus? := some tag }
 
 /-- Tags pretty-printed code with infos from the delaborator. -/
 partial def tagCodeInfos (ctx : Elab.ContextInfo) (infos : SubExpr.PosMap Elab.Info) (tt : TaggedText (Nat × Nat))
@@ -66,12 +68,14 @@ where
       | none   => go subTt
       | some i =>
         let t : SubexprInfo := {
-          info := WithRpcRef.mk { ctx, info := i }
+          info := WithRpcRef.mk { ctx, info := i, children := .empty }
           subexprPos := n
         }
         TaggedText.tag t (go subTt)
 
 def ppExprTagged (e : Expr) (explicit : Bool := false) : MetaM CodeWithInfos := do
+  if pp.raw.get (← getOptions) then
+    return .text (toString e)
   let delab := open PrettyPrinter.Delaborator in
     if explicit then
       withOptionAtCurrPos pp.tagAppFns.name true do

@@ -64,23 +64,65 @@ open Meta
 
 @[builtin_macro Lean.Parser.Term.show] def expandShow : Macro := fun stx =>
   match stx with
-  | `(show $type from $val)  => let thisId := mkIdentFrom stx `this; `(let_fun $thisId : $type := $val; $thisId)
   | `(show $type by%$b $tac) => `(show $type from by%$b $tac)
   | _                        => Macro.throwUnsupported
 
+@[builtin_term_elab Lean.Parser.Term.show] def elabShow : TermElab := fun stx expectedType? => do
+  match stx with
+  | `(show $type from $val)  =>
+    /-
+    We first elaborate the type and try to unify it with the expected type if available.
+    Note that, we should not throw an error if the types do not unify. Recall that we have coercions and
+    the following is supported in Lean 3 and 4.
+    ```
+    example : Int :=
+      show Nat from 0
+    ```
+    -/
+    let type ← withSynthesize (mayPostpone := true) do
+      let type ← elabType type
+      if let some expectedType := expectedType? then
+        -- Recall that a similiar approach is used when elaborating applications
+        discard <| isDefEq expectedType type
+      return type
+    /-
+    Recall that we do not use the same approach used to elaborate type ascriptions.
+    For the `($val : $type)` notation, we just elaborate `val` using `type` and
+    ensure it has type `type`. This approach only ensure the type resulting expression
+    is definitionally equal to `type`. For the `show` notation we use `let_fun` to ensure the type
+    of the resulting expression is *structurally equal* `type`. Structural equality is important,
+    for example, if the resulting expression is a `simp`/`rw` parameter. Here is an example:
+    ```
+    example (x : Nat) : (x + 0) + y = x + y := by
+      rw [show x + 0 = x from rfl]
+    ```
+    -/
+    let thisId := mkIdentFrom stx `this
+    let valNew ← `(let_fun $thisId : $(← exprToSyntax type) := $val; $thisId)
+    elabTerm valNew expectedType?
+  | _ => throwUnsupportedSyntax
+
 @[builtin_macro Lean.Parser.Term.have] def expandHave : Macro := fun stx =>
   match stx with
-  | `(have $x $bs* $[: $type]? := $val; $body)            => `(let_fun $x $bs* $[: $type]? := $val; $body)
-  | `(have%$tk $[: $type]? := $val; $body)                => `(have $(mkIdentFrom tk `this (canonical := true)) $[: $type]? := $val; $body)
-  | `(have $x $bs* $[: $type]? $alts; $body)              => `(let_fun $x $bs* $[: $type]? $alts; $body)
-  | `(have%$tk $[: $type]? $alts:matchAlts; $body)        => `(have $(mkIdentFrom tk `this (canonical := true)) $[: $type]? $alts:matchAlts; $body)
-  | `(have $pattern:term $[: $type]? := $val:term; $body) => `(let_fun $pattern:term $[: $type]? := $val:term ; $body)
-  | _                                                     => Macro.throwUnsupported
+  | `(have $hy:hygieneInfo $bs* $[: $type]? := $val; $body) =>
+    `(have $(HygieneInfo.mkIdent hy `this (canonical := true)) $bs* $[: $type]? := $val; $body)
+  | `(have $hy:hygieneInfo $bs* $[: $type]? $alts; $body)   =>
+    `(have $(HygieneInfo.mkIdent hy `this (canonical := true)) $bs* $[: $type]? $alts; $body)
+  | `(have $x:ident $bs* $[: $type]? := $val; $body) => `(let_fun $x $bs* $[: $type]? := $val; $body)
+  | `(have $x:ident $bs* $[: $type]? $alts; $body)   => `(let_fun $x $bs* $[: $type]? $alts; $body)
+  | `(have _%$x     $bs* $[: $type]? := $val; $body) => `(let_fun _%$x $bs* $[: $type]? := $val; $body)
+  | `(have _%$x     $bs* $[: $type]? $alts; $body)   => `(let_fun _%$x $bs* $[: $type]? $alts; $body)
+  | `(have $pattern:term $[: $type]? := $val; $body) => `(let_fun $pattern:term $[: $type]? := $val; $body)
+  | _                                                => Macro.throwUnsupported
 
 @[builtin_macro Lean.Parser.Term.suffices] def expandSuffices : Macro
-  | `(suffices%$tk $[$x :]? $type from $val; $body)            => `(have%$tk $[$x]? : $type := $body; $val)
-  | `(suffices%$tk $[$x :]? $type by%$b $tac:tacticSeq; $body) => `(have%$tk $[$x]? : $type := $body; by%$b $tac)
-  | _                                                          => Macro.throwUnsupported
+  | `(suffices%$tk $x:ident      : $type from $val; $body)            => `(have%$tk $x : $type := $body; $val)
+  | `(suffices%$tk _%$x          : $type from $val; $body)            => `(have%$tk _%$x : $type := $body; $val)
+  | `(suffices%$tk $hy:hygieneInfo $type from $val; $body)            => `(have%$tk $hy:hygieneInfo : $type := $body; $val)
+  | `(suffices%$tk $x:ident      : $type by%$b $tac:tacticSeq; $body) => `(have%$tk $x : $type := $body; by%$b $tac)
+  | `(suffices%$tk _%$x          : $type by%$b $tac:tacticSeq; $body) => `(have%$tk _%$x : $type := $body; by%$b $tac)
+  | `(suffices%$tk $hy:hygieneInfo $type by%$b $tac:tacticSeq; $body) => `(have%$tk $hy:hygieneInfo : $type := $body; by%$b $tac)
+  | _                                                                 => Macro.throwUnsupported
 
 open Lean.Parser in
 private def elabParserMacroAux (prec e : Term) (withAnonymousAntiquot : Bool) : TermElabM Syntax := do

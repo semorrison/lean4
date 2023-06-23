@@ -41,7 +41,7 @@ def parseHeader (inputCtx : InputContext) : IO (Syntax × ModuleParserState × M
   let p   := andthenFn whitespace Module.header.fn
   let tokens := Module.updateTokens (getTokenTable dummyEnv)
   let s   := p.run inputCtx { env := dummyEnv, options := {} } tokens (mkParserState inputCtx.input)
-  let stx := s.stxStack.back
+  let stx := if s.stxStack.isEmpty then .missing else s.stxStack.back
   match s.errorMsg with
   | some errorMsg =>
     let msg := mkErrorMessage inputCtx s.pos (toString errorMsg)
@@ -51,13 +51,10 @@ def parseHeader (inputCtx : InputContext) : IO (Syntax × ModuleParserState × M
 
 private def mkEOI (pos : String.Pos) : Syntax :=
   let atom := mkAtom (SourceInfo.original "".toSubstring pos "".toSubstring pos) ""
-  mkNode `Lean.Parser.Module.eoi #[atom]
-
-def isEOI (s : Syntax) : Bool :=
-  s.isOfKind `Lean.Parser.Module.eoi
+  mkNode ``Command.eoi #[atom]
 
 def isTerminalCommand (s : Syntax) : Bool :=
-  s.isOfKind ``Command.exit || s.isOfKind ``Command.import
+  s.isOfKind ``Command.exit || s.isOfKind ``Command.import || s.isOfKind ``Command.eoi
 
 private def consumeInput (inputCtx : InputContext) (pmctx : ParserModuleContext) (pos : String.Pos) : String.Pos :=
   let s : ParserState := { cache := initCacheForInput inputCtx.input, pos := pos }
@@ -114,7 +111,7 @@ partial def testParseModuleAux (env : Environment) (inputCtx : InputContext) (s 
   let rec parse (state : ModuleParserState) (msgs : MessageLog) (stxs : Array Syntax) :=
     match parseCommand inputCtx { env := env, options := {} } state msgs with
     | (stx, state, msgs) =>
-      if isEOI stx then
+      if isTerminalCommand stx then
         if msgs.isEmpty then
           pure stxs
         else do

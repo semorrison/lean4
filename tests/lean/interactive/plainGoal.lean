@@ -102,6 +102,35 @@ example : True = True := by
   --
 --^ $/lean/plainGoal
 
+example : True := by
+  have : True := by
+    -- type here
+  --^ $/lean/plainGoal
+-- no `this` here either, but seems okay
+--^ $/lean/plainGoal
+
+example : True := by
+  have : True := by
+    -- type here
+  --^ $/lean/plainGoal
+  apply this
+--^ $/lean/plainGoal
+-- note: no output here at all because of parse error
+
 example : False := by
 -- EOF test
 --^ $/lean/plainGoal
+
+example (hp : p) (hq : q) : p ∧ q := by
+  suffices q ∧ p by
+               --^ $/lean/plainGoal
+
+example (hp : p) (hq : q) : p ∧ q :=
+  show id (p ∧ q) by
+                --^ $/lean/plainGoal
+
+example : True ∧ False := by
+  constructor
+  · --
+ --^ $/lean/plainGoal
+  --^ $/lean/plainGoal

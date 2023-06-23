@@ -69,11 +69,14 @@ Output:
 -/
 -- Note that we need to preserve the separators to show the right goals after semicolons.
 def addCheckpoints (stx : Syntax) : TacticM Syntax := do
-  -- if (← readThe Term.Context).tacticCache? |>.isSome then
   if !(← stx.getSepArgs.anyM isCheckpointableTactic) then return stx
+  -- do not checkpoint checkpointable tactic by itself to prevent infinite recursion
+  -- TODO: rethink approach if we add non-trivial checkpointable tactics
+  if stx.getNumArgs <= 2 then return stx
   let mut currentCheckpointBlock := #[]
   let mut output := #[]
-  for i in [:stx.getArgs.size / 2] do
+  -- `+ 1` to account for optional trailing separator
+  for i in [:(stx.getArgs.size + 1) / 2] do
     let tac := stx[2*i]
     let sep? := stx.getArgs[2*i+1]?
     if (← isCheckpointableTactic tac) then
@@ -83,7 +86,7 @@ def addCheckpoints (stx : Syntax) : TacticM Syntax := do
           mkNode ``tacticSeq #[
             mkNode ``tacticSeq1Indented #[
               -- HACK: null node is not a valid tactic, but prevents infinite loop
-              mkNullNode (currentCheckpointBlock.push tac)
+              mkNullNode (currentCheckpointBlock.push (mkNullNode #[tac]))
             ]
           ]
         ]
@@ -112,6 +115,17 @@ def evalSepByIndentTactic (stx : Syntax) : TacticM Unit := do
   let initInfo ← mkInitialTacticInfo stx[0]
   withRef stx[2] <| closeUsingOrAdmit do
     -- save state before/after entering focus on `{`
+    withInfoContext (pure ()) initInfo
+    evalSepByIndentTactic stx[1]
+
+@[builtin_tactic cdot] def evalTacticCDot : Tactic := fun stx => do
+  -- adjusted copy of `evalTacticSeqBracketed`; we used to use the macro
+  -- ``| `(tactic| $cdot:cdotTk $tacs) => `(tactic| {%$cdot ($tacs) }%$cdot)``
+  -- but the token antiquotation does not copy trailing whitespace, leading to
+  -- differences in the goal display (#2153)
+  let initInfo ← mkInitialTacticInfo stx[0]
+  withRef stx[0] <| closeUsingOrAdmit do
+    -- save state before/after entering focus on `·`
     withInfoContext (pure ()) initInfo
     evalSepByIndentTactic stx[1]
 

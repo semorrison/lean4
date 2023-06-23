@@ -17,7 +17,7 @@ def admitGoal (mvarId : MVarId) : MetaM Unit :=
 def goalsToMessageData (goals : List MVarId) : MessageData :=
   MessageData.joinSep (goals.map MessageData.ofGoal) m!"\n\n"
 
-def Term.reportUnsolvedGoals (goals : List MVarId) : TermElabM Unit := do
+def Term.reportUnsolvedGoals (goals : List MVarId) : MetaM Unit := do
   logError <| MessageData.tagged `Tactic.unsolvedGoals <| m!"unsolved goals\n{goalsToMessageData goals}"
   goals.forM fun mvarId => admitGoal mvarId
 
@@ -139,14 +139,14 @@ structure EvalTacticFailure where
   exception : Exception
   state : SavedState
 
-partial def evalTactic (stx : Syntax) : TacticM Unit :=
+partial def evalTactic (stx : Syntax) : TacticM Unit := do
+  profileitM Exception "tactic execution" (decl := stx.getKind) (← getOptions) <|
   withRef stx <| withIncRecDepth <| withFreshMacroScope <| match stx with
     | .node _ k _    =>
       if k == nullKind then
         -- Macro writers create a sequence of tactics `t₁ ... tₙ` using `mkNullNode #[t₁, ..., tₙ]`
         stx.getArgs.forM evalTactic
-      else do
-        trace[Elab.step] "{stx}"
+      else withTraceNode `Elab.step (fun _ => return stx) do
         let evalFns := tacticElabAttribute.getEntries (← getEnv) stx.getKind
         let macros  := macroAttribute.getEntries (← getEnv) stx.getKind
         if evalFns.isEmpty && macros.isEmpty then

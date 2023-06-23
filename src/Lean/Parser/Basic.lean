@@ -750,18 +750,18 @@ partial def identFnAux (startPos : String.Pos) (tk : Option Token) (r : Name) : 
             parse r c s
           else
             mkIdResult startPos tk r c s
-    else if isIdFirst curr then
-      let startPart := i
-      let s         := takeWhileFn isIdRest c (s.next input i)
-      let stopPart  := s.pos
-      let r := .str r (input.extract startPart stopPart)
-      if isIdCont input s then
-        let s := s.next input s.pos
-        parse r c s
+      else if isIdFirst curr then
+        let startPart := i
+        let s         := takeWhileFn isIdRest c (s.next input i)
+        let stopPart  := s.pos
+        let r := .str r (input.extract startPart stopPart)
+        if isIdCont input s then
+          let s := s.next input s.pos
+          parse r c s
+        else
+          mkIdResult startPos tk r c s
       else
-        mkIdResult startPos tk r c s
-    else
-      mkTokenAndFixPos startPos tk c s
+        mkTokenAndFixPos startPos tk c s
   parse r
 
 private def isIdFirstOrBeginEscape (c : Char) : Bool :=
@@ -786,7 +786,7 @@ private def tokenFnAux : ParserFn := fun c s =>
   let curr  := input.get i
   if curr == '\"' then
     strLitFnAux i c (s.next input i)
-  else if curr == '\'' then
+  else if curr == '\'' && getNext input i != '\'' then
     charLitFnAux i c (s.next input i)
   else if curr.isDigit then
     numberFnAux c s
@@ -1070,6 +1070,36 @@ def identEqFn (id : Name) : ParserFn := fun c s =>
 def identEq (id : Name) : Parser := {
   fn   := identEqFn id
   info := mkAtomicInfo "ident"
+}
+
+def hygieneInfoFn : ParserFn := fun c s => Id.run do
+  let input := c.input
+  let finish pos str trailing s :=
+    -- Builds an actual hygieneInfo node from empty string `str` and trailing whitespace `trailing`.
+    let info  := SourceInfo.original str pos trailing pos
+    let ident := mkIdent info str .anonymous
+    let stx   := mkNode hygieneInfoKind #[ident]
+    s.pushSyntax stx
+  -- If we are at the whitespace after a token, the last item on the stack
+  -- will have trailing whitespace. We want to position this hygieneInfo
+  -- item immediately after the last token, and reattribute the trailing whitespace
+  -- to the hygieneInfo node itself. This allows combinators like `ws` to
+  -- be unaffected by `hygieneInfo` parsers before or after, see `2262.lean`.
+  if !s.stxStack.isEmpty then
+    let prev := s.stxStack.back
+    if let .original leading pos trailing endPos := prev.getTailInfo then
+      let str := mkEmptySubstringAt input endPos
+      -- steal the trailing whitespace from the last node and use it for this node
+      let s := s.popSyntax.pushSyntax <| prev.setTailInfo (.original leading pos str endPos)
+      return finish endPos str trailing s
+  -- The stack can be empty if this is either the first token, or if we are in a fresh cache.
+  -- In that case we just put the hygieneInfo at the current location.
+  let str := mkEmptySubstringAt input s.pos
+  finish s.pos str str s
+
+def hygieneInfoNoAntiquot : Parser := {
+  fn   := hygieneInfoFn
+  info := nodeInfo hygieneInfoKind epsilonInfo
 }
 
 namespace ParserState

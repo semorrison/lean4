@@ -29,17 +29,16 @@ namespace SynthInstance
 def getMaxHeartbeats (opts : Options) : Nat :=
   synthInstance.maxHeartbeats.get opts * 1000
 
-builtin_initialize inferTCGoalsRLAttr : TagAttribute ←
-  registerTagAttribute `infer_tc_goals_rl "instruct type class resolution procedure to solve goals from right to left for this instance"
-
-def hasInferTCGoalsRLAttribute (env : Environment) (constName : Name) : Bool :=
-  inferTCGoalsRLAttr.hasTag env constName
+structure Instance where
+  val : Expr
+  synthOrder : Array Nat
+  deriving Inhabited
 
 structure GeneratorNode where
   mvar            : Expr
   key             : Expr
   mctx            : MetavarContext
-  instances       : Array Expr
+  instances       : Array Instance
   currInstanceIdx : Nat
   deriving Inhabited
 
@@ -102,7 +101,7 @@ partial def normLevel (u : Level) : M Level := do
     | Level.max v w     => return u.updateMax! (← normLevel v) (← normLevel w)
     | Level.imax v w    => return u.updateIMax! (← normLevel v) (← normLevel w)
     | Level.mvar mvarId =>
-      if !(← isLevelMVarAssignable mvarId) then
+      if (← getMCtx).getLevelDepth mvarId != (← getMCtx).depth then
         return u
       else
         let s ← get
@@ -186,7 +185,7 @@ instance : Inhabited (SynthM α) where
   default := fun _ _ => default
 
 /-- Return globals and locals instances that may unify with `type` -/
-def getInstances (type : Expr) : MetaM (Array Expr) := do
+def getInstances (type : Expr) : MetaM (Array Instance) := do
   -- We must retrieve `localInstances` before we use `forallTelescopeReducing` because it will update the set of local instances
   let localInstances ← getLocalInstances
   forallTelescopeReducing type fun _ type => do
@@ -200,16 +199,27 @@ def getInstances (type : Expr) : MetaM (Array Expr) := do
       -- Most instances have default priority.
       let result := result.insertionSort fun e₁ e₂ => e₁.priority < e₂.priority
       let erasedInstances ← getErasedInstances
-      let result ← result.filterMapM fun e => match e.val with
+      let mut result ← result.filterMapM fun e => match e.val with
         | Expr.const constName us =>
           if erasedInstances.contains constName then
             return none
           else
-            return some <| e.val.updateConst! (← us.mapM (fun _ => mkFreshLevelMVar))
+            return some {
+              val := e.val.updateConst! (← us.mapM (fun _ => mkFreshLevelMVar))
+              synthOrder := e.synthOrder
+            }
         | _ => panic! "global instance is not a constant"
-      let result := localInstances.foldl (init := result) fun (result : Array Expr) linst =>
-        if linst.className == className then result.push linst.fvar else result
-      trace[Meta.synthInstance.instances] result
+      for linst in localInstances do
+        if linst.className == className then
+          let synthOrder ← forallTelescopeReducing (← inferType linst.fvar) fun xs _ => do
+            if xs.isEmpty then return #[]
+            let mut order := #[]
+            for i in [:xs.size], x in xs do
+              if (← getFVarLocalDecl x).binderInfo == .instImplicit then
+                order := order.push i
+            return order
+          result := result.push { val := linst.fvar, synthOrder }
+      trace[Meta.synthInstance.instances] result.map (·.val)
       return result
 
 def mkGeneratorNode? (key mvar : Expr) : MetaM (Option GeneratorNode) := do
@@ -270,25 +280,6 @@ structure SubgoalsResult where
   instVal      : Expr
   instTypeBody : Expr
 
-private partial def getSubgoalsAux (lctx : LocalContext) (localInsts : LocalInstances) (xs : Array Expr)
-    : Array Expr → Nat → List Expr → Expr → Expr → MetaM SubgoalsResult
-  | args, j, subgoals, instVal, Expr.forallE _ d b bi => do
-    let d        := d.instantiateRevRange j args.size args
-    let mvarType ← mkForallFVars xs d
-    let mvar     ← mkFreshExprMVarAt lctx localInsts mvarType
-    let arg      := mkAppN mvar xs
-    let instVal  := mkApp instVal arg
-    let subgoals := if bi.isInstImplicit then mvar::subgoals else subgoals
-    let args     := args.push (mkAppN mvar xs)
-    getSubgoalsAux lctx localInsts xs args j subgoals instVal b
-  | args, j, subgoals, instVal, type => do
-    let type := type.instantiateRevRange j args.size args
-    let type ← whnf type
-    if type.isForall then
-      getSubgoalsAux lctx localInsts xs args args.size subgoals instVal type
-    else
-      return ⟨subgoals, instVal, type⟩
-
 /--
   `getSubgoals lctx localInsts xs inst` creates the subgoals for the instance `inst`.
   The subgoals are in the context of the free variables `xs`, and
@@ -304,45 +295,36 @@ private partial def getSubgoalsAux (lctx : LocalContext) (localInsts : LocalInst
   metavariables that are instance implicit arguments, and the expressions:
     - `inst (?m_1 xs) ... (?m_n xs)` (aka `instVal`)
     - `B (?m_1 xs) ... (?m_n xs)` -/
-def getSubgoals (lctx : LocalContext) (localInsts : LocalInstances) (xs : Array Expr) (inst : Expr) : MetaM SubgoalsResult := do
-  let instType ← inferType inst
-  let result ← getSubgoalsAux lctx localInsts xs #[] 0 [] inst instType
-  match inst.getAppFn with
-  | Expr.const constName _ =>
-    let env ← getEnv
-    if hasInferTCGoalsRLAttribute env constName then
-      return result
+def getSubgoals (lctx : LocalContext) (localInsts : LocalInstances) (xs : Array Expr) (inst : Instance) : MetaM SubgoalsResult := do
+  let mut instVal := inst.val
+  let mut instType ← inferType instVal
+  let mut mvars := #[]
+  let mut subst := #[]
+  repeat do
+    if let .forallE _ d b _ := instType then
+      let d := d.instantiateRev subst
+      let mvar ← mkFreshExprMVarAt lctx localInsts (← mkForallFVars xs d)
+      subst := subst.push (mkAppN mvar xs)
+      instVal := mkApp instVal (mkAppN mvar xs)
+      instType := b
+      mvars := mvars.push mvar
     else
-      return { result with subgoals := result.subgoals.reverse }
-  | _ => return result
+      instType ← whnf (instType.instantiateRev subst)
+      instVal := instVal.instantiateRev subst
+      subst := #[]
+      unless instType.isForall do break
+  return {
+    instVal := instVal.instantiateRev subst
+    instTypeBody := instType.instantiateRev subst
+    subgoals := inst.synthOrder.map (mvars[·]!) |>.toList
+  }
 
 /--
   Try to synthesize metavariable `mvar` using the instance `inst`.
   Remark: `mctx` is set using `withMCtx`.
   If it succeeds, the result is a new updated metavariable context and a new list of subgoals.
   A subgoal is created for each instance implicit parameter of `inst`. -/
-def tryResolve (mvar : Expr) (inst : Expr) : MetaM (Option (MetavarContext × List Expr)) := do
-  let mvar ← instantiateMVars mvar
-  if !(← hasAssignableMVar mvar) then
-    /- The metavariable `mvar` may have been assigned when solving typing constraints.
-       This may happen when a local instance type depends on other local instances.
-       For example, in Mathlib, we have
-       ```
-       @Submodule.setLike : {R : Type u_1} → {M : Type u_2} →
-         [_inst_1 : Semiring R] →
-         [_inst_2 : AddCommMonoid M] →
-         [_inst_3 : @ModuleS R M _inst_1 _inst_2] →
-         SetLike (@Submodule R M _inst_1 _inst_2 _inst_3) M
-       ```
-       TODO: discuss what is the correct behavior here. There are other possibilities.
-       1) We could try to synthesize the instances `_inst_1` and `_inst_2` and check
-          whether it is defeq to the one inferred by typing constraints. That is, we
-          remove this `if`-statement. We discarded this one because some Mathlib theorems
-          failed to be elaborated using it.
-       2) Generate an error/warning message when instances such as `Submodule.setLike` are declared,
-          and instruct user to use `{}` binder annotation for `_inst_1` `_inst_2`.
-     -/
-    return some ((← getMCtx), [])
+def tryResolve (mvar : Expr) (inst : Instance) : MetaM (Option (MetavarContext × List Expr)) := do
   let mvarType   ← inferType mvar
   let lctx       ← getLCtx
   let localInsts ← getLocalInstances
@@ -470,6 +452,21 @@ private def removeUnusedArguments? (mctx : MetavarContext) (mvar : Expr) : MetaM
 
 /-- Process the next subgoal in the given consumer node. -/
 def consume (cNode : ConsumerNode) : SynthM Unit := do
+  /- Filter out subgoals that have already been assigned when solving typing constraints.
+    This may happen when a local instance type depends on other local instances.
+    For example, in Mathlib, we have
+    ```
+    @Submodule.setLike : {R : Type u_1} → {M : Type u_2} →
+      [_inst_1 : Semiring R] →
+      [_inst_2 : AddCommMonoid M] →
+      [_inst_3 : @ModuleS R M _inst_1 _inst_2] →
+      SetLike (@Submodule R M _inst_1 _inst_2 _inst_3) M
+    ```
+  -/
+  let cNode := { cNode with
+    subgoals := ← withMCtx cNode.mctx do
+      cNode.subgoals.filterM (not <$> ·.mvarId!.isAssigned)
+  }
   match cNode.subgoals with
   | []      => addAnswer cNode
   | mvar::_ =>
@@ -522,7 +519,7 @@ def generate : SynthM Unit := do
     let mvar := gNode.mvar
     discard do withMCtx mctx do
       withTraceNode `Meta.synthInstance
-        (return m!"{exceptOptionEmoji ·} apply {inst} to {← instantiateMVars (← inferType mvar)}") do
+        (return m!"{exceptOptionEmoji ·} apply {inst.val} to {← instantiateMVars (← inferType mvar)}") do
       modifyTop fun gNode => { gNode with currInstanceIdx := idx }
       if let some (mctx, subgoals) ← tryResolve mvar inst then
         consume { key, mvar, subgoals, mctx, size := 0 }
@@ -651,7 +648,6 @@ private def preprocessOutParam (type : Expr) : MetaM Expr :=
         unless outParamsPos.isEmpty do
           let args := typeBody.getAppArgs
           let cType ← inferType c
-          trace[Meta.debug] "{declName} : {outParamsPos}"
           let args ← preprocessArgs cType 0 args outParamsPos
           return (← mkForallFVars xs (mkAppN c args))
       return type
@@ -663,42 +659,46 @@ private def preprocessOutParam (type : Expr) : MetaM Expr :=
   Remark: we use a different option for controlling the maximum result size for coercions.
 -/
 
-def synthInstance? (type : Expr) (maxResultSize? : Option Nat := none) : MetaM (Option Expr) := do profileitM Exception "typeclass inference" (← getOptions) do
+def synthInstance? (type : Expr) (maxResultSize? : Option Nat := none) : MetaM (Option Expr) := do profileitM Exception "typeclass inference" (← getOptions) (decl := type.getAppFn.constName?.getD .anonymous) do
   let opts ← getOptions
   let maxResultSize := maxResultSize?.getD (synthInstance.maxSize.get opts)
-  /-
-    We disable eta for structures that are not classes during TC resolution because it allows us to find unintended solutions.
-    See discussion at
-      https://leanprover.zulipchat.com/#narrow/stream/270676-lean4/topic/.60constructor.60.20and.20.60Applicative.60/near/279984801
-  -/
+  withTraceNode `Meta.synthInstance
+    (return m!"{exceptOptionEmoji ·} {← instantiateMVars type}") do
   withConfig (fun config => { config with isDefEqStuckEx := true, transparency := TransparencyMode.instances,
-                                          foApprox := true, ctxApprox := true, constApprox := false,
-                                          etaStruct := .notClasses }) do
+                                          foApprox := true, ctxApprox := true, constApprox := false }) do
+    let localInsts ← getLocalInstances
     let type ← instantiateMVars type
     let type ← preprocess type
     let s ← get
-    match s.cache.synthInstance.find? type with
-    | some result => pure result
+    let rec assignOutParams (result : Expr) : MetaM Bool := do
+      let resultType ← inferType result
+      /- Output parameters of local instances may be marked as `syntheticOpaque` by the application-elaborator.
+         We use `withAssignableSyntheticOpaque` to make sure this kind of parameter can be assigned by the following `isDefEq`.
+         TODO: rewrite this check to avoid `withAssignableSyntheticOpaque`. -/
+      let defEq ← withDefault <| withAssignableSyntheticOpaque <| isDefEq type resultType
+      unless defEq do
+        trace[Meta.synthInstance] "{crossEmoji} result type{indentExpr resultType}\nis not definitionally equal to{indentExpr type}"
+      return defEq
+    match s.cache.synthInstance.find? (localInsts, type) with
+    | some result =>
+      trace[Meta.synthInstance] "result {result} (cached)"
+      if let some inst := result then
+        unless (← assignOutParams inst) do
+          return none
+      pure result
     | none        =>
-      withTraceNode `Meta.synthInstance
-        (return m!"{exceptOptionEmoji ·} {← instantiateMVars type}") do
-      let result? ← withNewMCtxDepth do
+      let result? ← withNewMCtxDepth (allowLevelAssignments := true) do
         let normType ← preprocessOutParam type
         SynthInstance.main normType maxResultSize
-      let resultHasUnivMVars := if let some result := result? then !result.paramNames.isEmpty else false
       let result? ← match result? with
         | none        => pure none
         | some result => do
           let (_, _, result) ← openAbstractMVarsResult result
           trace[Meta.synthInstance] "result {result}"
-          let resultType ← inferType result
-          /- Output parameters of local instances may be marked as `syntheticOpaque` by the application-elaborator.
-             We use `withAssignableSyntheticOpaque` to make sure this kind of parameter can be assigned by the following `isDefEq`.
-             TODO: rewrite this check to avoid `withAssignableSyntheticOpaque`. -/
-          if (← withDefault <| withAssignableSyntheticOpaque <| isDefEq type resultType) then
+          if (← assignOutParams result) then
             let result ← instantiateMVars result
             /- We use `check` to propogate universe constraints implied by the `result`.
-               Recall that we use `ignoreLevelMVarDepth := true` which allows universe metavariables in the current depth to be assigned,
+               Recall that we use `allowLevelAssignments := true` which allows universe metavariables in the current depth to be assigned,
                but these assignments are discarded by `withNewMCtxDepth`.
 
                TODO: If this `check` is a performance bottleneck, we can improve performance by tracking whether
@@ -725,13 +725,9 @@ def synthInstance? (type : Expr) (maxResultSize? : Option Nat := none) : MetaM (
             check result
             pure (some result)
           else
-            trace[Meta.synthInstance] "{crossEmoji} result type{indentExpr resultType}\nis not definitionally equal to{indentExpr type}"
             pure none
-      if type.hasMVar || resultHasUnivMVars then
-        pure result?
-      else do
-        modify fun s => { s with cache.synthInstance := s.cache.synthInstance.insert type result? }
-        pure result?
+      modify fun s => { s with cache.synthInstance := s.cache.synthInstance.insert (localInsts, type) result? }
+      pure result?
 
 /--
   Return `LOption.some r` if succeeded, `LOption.none` if it failed, and `LOption.undef` if

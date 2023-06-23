@@ -724,26 +724,7 @@ where
     return r
 
 @[inline] def withSimpConfig (ctx : Context) (x : MetaM α) : MetaM α :=
-  /-
-  We set `ignoreLevelMVarDepth := false` because we don't want a `simp` theorem to constraint a universe level metavariable.
-  For example, consider the following example from issue #1829
-  ```
-  @[simp] theorem eq_iff_true_of_subsingleton [Subsingleton α] (x y : α) : x = y ↔ True :=
-  ⟨fun _ => ⟨⟩, fun _ => (Subsingleton.elim ..)⟩
-
-  structure Func' (α : Sort _) (β : Sort _) :=
-  (toFun    : α → β)
-
-  def r : Func' α α := ⟨id⟩
-
-  example (x y : α) (h : x = y) : r.toFun x = y := by simp <;> rw [h]
-  ```
-  `α` has type `Sort ?u`. If `ignoreLevelMVarDepth := true`, then `eq_iff_true_of_subsingleton` is applicable
-  by setting `?u := 0` and using instance `instance (p : Prop) : Subsingleton p`.
-  Moreover, the assignment is lost since `simp`, and a type error is produced later. Even if we prevented the assignment
-  from being lost, the situation is far from ideal since `simp` would be restricting the universe level.
-  -/
-  withConfig (fun c => { c with etaStruct := ctx.config.etaStruct, ignoreLevelMVarDepth := false }) <| withReducible x
+  withConfig (fun c => { c with etaStruct := ctx.config.etaStruct }) <| withReducible x
 
 def main (e : Expr) (ctx : Context) (usedSimps : UsedSimps := {}) (methods : Methods := {}) : MetaM (Result × UsedSimps) := do
   let ctx := { ctx with config := (← ctx.config.updateArith) }
@@ -788,7 +769,7 @@ where
   go (e : Expr) : Bool :=
     match e with
     | .forallE _ d b _ => (d.isEq || d.isHEq || b.hasLooseBVar 0) && go b
-    | _ => e.isConstOf ``False
+    | _ => e.consumeMData.isConstOf ``False
 
 abbrev Discharge := Expr → SimpM (Option Expr)
 
@@ -845,7 +826,7 @@ mutual
     else
       withReader (fun ctx => { ctx with dischargeDepth := ctx.dischargeDepth + 1 }) do
         let r ← simp e { pre := pre, post := post, discharge? := discharge? }
-        if r.expr.isConstOf ``True then
+        if r.expr.consumeMData.isConstOf ``True then
           try
             return some (← mkOfEqTrue (← r.getProof))
           catch _ =>
@@ -896,7 +877,7 @@ def simpTargetCore (mvarId : MVarId) (ctx : Simp.Context) (discharge? : Option S
     (mayCloseGoal := true) (usedSimps : UsedSimps := {}) : MetaM (Option MVarId × UsedSimps) := do
   let target ← instantiateMVars (← mvarId.getType)
   let (r, usedSimps) ← simp target ctx discharge? usedSimps
-  if mayCloseGoal && r.expr.isConstOf ``True then
+  if mayCloseGoal && r.expr.consumeMData.isConstOf ``True then
     match r.proof? with
     | some proof => mvarId.assign (← mkOfEqTrue proof)
     | none => mvarId.assign (mkConst ``True.intro)
@@ -919,7 +900,7 @@ def simpTarget (mvarId : MVarId) (ctx : Simp.Context) (discharge? : Option Simp.
 
   This method assumes `mvarId` is not assigned, and we are already using `mvarId`s local context. -/
 def applySimpResultToProp (mvarId : MVarId) (proof : Expr) (prop : Expr) (r : Simp.Result) (mayCloseGoal := true) : MetaM (Option (Expr × Expr)) := do
-  if mayCloseGoal && r.expr.isConstOf ``False then
+  if mayCloseGoal && r.expr.consumeMData.isConstOf ``False then
     match r.proof? with
     | some eqProof => mvarId.assign (← mkFalseElim (← mvarId.getType) (← mkEqMP eqProof proof))
     | none => mvarId.assign (← mkFalseElim (← mvarId.getType) proof)
@@ -967,7 +948,7 @@ def applySimpResultToLocalDecl (mvarId : MVarId) (fvarId : FVarId) (r : Simp.Res
   if r.proof?.isNone then
     -- New result is definitionally equal to input. Thus, we can avoid creating a new variable if there are dependencies
     let mvarId ← mvarId.replaceLocalDeclDefEq fvarId r.expr
-    if mayCloseGoal && r.expr.isConstOf ``False then
+    if mayCloseGoal && r.expr.consumeMData.isConstOf ``False then
       mvarId.assign (← mkFalseElim (← mvarId.getType) (mkFVar fvarId))
       return none
     else
@@ -1003,7 +984,7 @@ def simpGoal (mvarId : MVarId) (ctx : Simp.Context) (discharge? : Option Simp.Di
         | none => return (none, usedSimps)
         | some (value, type) => toAssert := toAssert.push { userName := localDecl.userName, type := type, value := value }
       | none =>
-        if r.expr.isConstOf ``False then
+        if r.expr.consumeMData.isConstOf ``False then
           mvarId.assign (← mkFalseElim (← mvarId.getType) (mkFVar fvarId))
           return (none, usedSimps)
         -- TODO: if there are no forwards dependencies we may consider using the same approach we used when `r.proof?` is a `some ...`
@@ -1045,7 +1026,7 @@ def dsimpGoal (mvarId : MVarId) (ctx : Simp.Context) (simplifyTarget : Bool := t
       let type ← instantiateMVars (← fvarId.getType)
       let (typeNew, usedSimps') ← dsimp type ctx
       usedSimps := usedSimps'
-      if typeNew.isConstOf ``False then
+      if typeNew.consumeMData.isConstOf ``False then
         mvarId.assign (← mkFalseElim (← mvarId.getType) (mkFVar fvarId))
         return (none, usedSimps)
       if typeNew != type then
@@ -1054,7 +1035,7 @@ def dsimpGoal (mvarId : MVarId) (ctx : Simp.Context) (simplifyTarget : Bool := t
       let target ← mvarId.getType
       let (targetNew, usedSimps') ← dsimp target ctx usedSimps
       usedSimps := usedSimps'
-      if targetNew.isConstOf ``True then
+      if targetNew.consumeMData.isConstOf ``True then
         mvarId.assign (mkConst ``True.intro)
         return (none, usedSimps)
       if let some (_, lhs, rhs) := targetNew.eq? then
