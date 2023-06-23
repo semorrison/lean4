@@ -82,13 +82,10 @@ mutual
         | some v => Bool.toLBool <$> isLevelDefEqAux u v
         | none   => return LBool.undef
     -- Handle `max u v =?= max u ?_` and `max v u =?= max u ?_` for `u` a parameter.
-    | Level.max u₁ u₂, Level.max (.param v₁) (.mvar v₂) =>
-      if u₁ == .param v₁ then
-        solve (.mvar v₂) u₂
-      else if u₂ == .param v₁ then
-        solve (.mvar v₂) u₁
-      else
-        return LBool.undef
+    | Level.max u v, Level.max p@(.param _) m@(.mvar _) =>
+      if u == p then solve m v
+      else if v == p then solve m u
+      else return LBool.undef
     | _, _ => return LBool.undef
 
   @[export lean_is_level_def_eq]
@@ -130,3 +127,12 @@ builtin_initialize
   registerTraceClass `Meta.isLevelDefEq.stuck (inherited := true)
 
 end Lean.Meta
+
+
+-- universe u v
+
+-- def blah := Type max u v
+
+-- example : Type max v u = blah.{v} := rfl
+
+-- example : Type max v u = blah.{u} := rfl
