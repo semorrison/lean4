@@ -81,9 +81,11 @@ mutual
         match (← Meta.decLevel? v) with
         | some v => Bool.toLBool <$> isLevelDefEqAux u v
         | none   => return LBool.undef
-    -- Handle `max u v =?= max v ?_` for `v` a parameter.
-    | Level.max u₁ (.param u₂), Level.max (.param v₁) (.mvar v₂) =>
-      if u₂ == v₁ then
+    -- Handle `max u v =?= max u ?_` and `max v u =?= max u ?_` for `u` a parameter.
+    | Level.max u₁ u₂, Level.max (.param v₁) (.mvar v₂) =>
+      if u₁ == .param v₁ then
+        solve (.mvar v₂) u₂
+      else if u₂ == .param v₁ then
         solve (.mvar v₂) u₁
       else
         return LBool.undef
