@@ -95,7 +95,7 @@ def mkInstanceName (binders : Array Syntax) (type : Syntax) : CommandElabM Name 
           | _ => pure ()
       ref.get
     set savedState
-    liftMacroM <| mkUnusedBaseName <| Name.mkSimple ("inst" ++ result)
+    liftMacroM <| mkUnusedBaseName <| Name.mkSimple ("inst" ++ result ++ "_ᾰ")
   catch _ =>
     set savedState
     mkFreshInstanceName
