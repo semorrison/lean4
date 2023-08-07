@@ -76,9 +76,9 @@ where
         go sources (sourcesNew.push source)
       else
         withFreshMacroScope do
-          let sourceNew ← `(src)
+          let sourceNew ← `(?src)
           let r ← go sources (sourcesNew.push sourceNew)
-          `(let src := $source; $r)
+          `(let_mvar% ?src := $source; $r)
 
 structure ExplicitSourceInfo where
   stx        : Syntax
