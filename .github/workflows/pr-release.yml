@@ -35,6 +35,7 @@ jobs:
           token: ${{ secrets.PR_RELEASES_TOKEN }}
           # We only need to checkout for tagging, so depth 0 is fine:
           fetch-depth: 0
+
       - name: Prepare release
         if: ${{ steps.workflow-info.outputs.pullRequestNumber != '' }}
         run: |
