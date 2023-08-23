@@ -5,7 +5,6 @@ on:
     workflows: [CI]
     types: [completed]
 
-
 jobs:
   on-success:
     runs-on: ubuntu-latest
@@ -25,6 +24,9 @@ jobs:
         with:
           run_id: ${{ github.event.workflow_run.id }}
           path: artifacts
+      - name: what did we download?
+        run: |
+          find artifacts
       - name: Checkout
         uses: actions/checkout@v3
         with:
