@@ -33,6 +33,7 @@ jobs:
           token: ${{ secrets.PR_RELEASES_TOKEN }}
           # We only need to checkout for tagging, so depth 0 is fine:
           fetch-depth: 0
+
       - name: Prepare release
         run: |
           git remote add pr-releases https://foo:'${{ secrets.PR_RELEASES_TOKEN }}'@github.com/${{ github.repository_owner }}/lean4-pr-releases.git
