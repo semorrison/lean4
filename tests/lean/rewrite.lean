@@ -48,3 +48,9 @@ exact h₁ h₃
 
 example (α : Type) (p : Prop) (a b c : α) (h : p → a = b) : a = c := by
   rw [h _]  -- should manifest goal `⊢ p`, like `rw [h]` would
+
+example (f : Nat → Nat) (w : ∀ n, f n = 0) : [f 1, f 2, f 1, f 2] = [0, 0, 0, 0] := by
+  rw (config := {occs := .pos [2]}) [w]
+  trace_state -- make sure we rewrote the first `f 2`, rather than the second `f 1`.
+  rw [w, w]
+
