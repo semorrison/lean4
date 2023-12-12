@@ -11,8 +11,14 @@ import Lake.Util.Log
 namespace Lake
 open System Lean
 
+/-- `elan` toolchain file name -/
+def toolchainFileName : FilePath := "lean-toolchain"
+
 /-- The default name of the Lake configuration file (i.e., `lakefile.lean`). -/
 def defaultConfigFile : FilePath := "lakefile.lean"
+
+/-- The default name of the Lake manifest file (i.e., `lake-manifest.json`). -/
+def defaultManifestFile := "lake-manifest.json"
 
 /-- Context for loading a Lake configuration. -/
 structure LoadConfig where
@@ -26,3 +32,5 @@ structure LoadConfig where
   configOpts : NameMap String := {}
   /-- The Lean options with which to elaborate the configuration file. -/
   leanOpts : Options := {}
+  /-- If true, Lake will elaborate configuration files instead of using OLeans. -/
+  reconfigure : Bool := false

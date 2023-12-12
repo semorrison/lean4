@@ -16,17 +16,17 @@ open Git System
 /-- The default module of an executable in `std` package. -/
 def defaultExeRoot : Name := `Main
 
-/-- `elan` toolchain file name -/
-def toolchainFileName : FilePath :=
-  "lean-toolchain"
-
 def gitignoreContents :=
-s!"/{defaultBuildDir}
-/{defaultPackagesDir}/*
+s!"/{defaultLakeDir}
 "
 
-def libFileContents :=
+def basicFileContents :=
   s!"def hello := \"world\""
+
+def libRootFileContents (libName : String) (libRoot : String) :=
+s!"-- This module serves as the root of the `{libName}` library.
+-- Import modules here that should be built as part of the library.
+import {libRoot}.Basic"
 
 def mainFileName : FilePath :=
   s!"{defaultExeRoot}.lean"
@@ -43,67 +43,66 @@ s!"def main : IO Unit :=
   IO.println s!\"Hello, world!\"
 "
 
-def stdConfigFileContents (pkgName libRoot : String) :=
+def stdConfigFileContents (pkgName libRoot exeName : String) :=
 s!"import Lake
 open Lake DSL
 
-package {pkgName} \{
+package {pkgName} where
   -- add package configuration options here
-}
 
-lean_lib {libRoot} \{
+lean_lib {libRoot} where
   -- add library configuration options here
-}
 
 @[default_target]
-lean_exe {pkgName} \{
+lean_exe {exeName} where
   root := `Main
-}
 "
 
 def exeConfigFileContents (pkgName exeRoot : String) :=
 s!"import Lake
 open Lake DSL
 
-package {pkgName} \{
+package {pkgName} where
   -- add package configuration options here
-}
 
 @[default_target]
-lean_exe {exeRoot} \{
-  -- add executable configuration options here
-}
+lean_exe {exeRoot} where
+  -- Enables the use of the Lean interpreter by the executable (e.g.,
+  -- `runFrontend`) at the expense of increased binary size on Linux.
+  -- Remove this line if you do not need such functionality.
+  supportInterpreter := true
 "
 
 def libConfigFileContents (pkgName libRoot : String) :=
 s!"import Lake
 open Lake DSL
 
-package {pkgName} \{
+package {pkgName} where
   -- add package configuration options here
-}
 
 @[default_target]
-lean_lib {libRoot} \{
+lean_lib {libRoot} where
   -- add library configuration options here
-}
 "
 
 def mathConfigFileContents (pkgName libRoot : String) :=
 s!"import Lake
 open Lake DSL
 
-package {pkgName} \{
-  -- add any package configuration options here
-}
+package {pkgName} where
+  -- Settings applied to both builds and interactive editing
+  leanOptions := #[
+    ⟨`pp.unicode.fun, true⟩, -- pretty-prints `fun a ↦ b`
+    ⟨`pp.proofs.withType, false⟩
+  ]
+  -- add any additional package configuration options here
 
 require mathlib from git
   \"https://github.com/leanprover-community/mathlib4.git\"
 
 @[default_target]
-lean_lib {libRoot} \{
+lean_lib {libRoot} where
   -- add any library configuration options here
-}
 "
 
 def mathToolchainUrl : String :=
@@ -123,22 +122,24 @@ def InitTemplate.parse? : String → Option InitTemplate
 | "math" => some .math
 | _ => none
 
-def InitTemplate.configFileContents (pkgName root : String) : InitTemplate → String
-| .std => stdConfigFileContents pkgName root
-| .lib => libConfigFileContents pkgName root
-| .exe => exeConfigFileContents pkgName root
-| .math => mathConfigFileContents pkgName root
+def escapeIdent (id : String) : String :=
+  Lean.idBeginEscape.toString ++ id ++ Lean.idEndEscape.toString
 
 def escapeName! : Name → String
-| .anonymous        => "[anonymous]"
-| .str .anonymous s => escape s
-| .str n s          => escapeName! n ++ "." ++ escape s
+| .anonymous        => unreachable!
+| .str .anonymous s => escapeIdent s
+| .str n s          => escapeName! n ++ "." ++ escapeIdent s
 | _                 => unreachable!
-where
-  escape s :=  Lean.idBeginEscape.toString ++ s ++ Lean.idEndEscape.toString
+
+def InitTemplate.configFileContents (pkgName : Name) (root : String) : InitTemplate → String
+| .std => stdConfigFileContents (escapeName! pkgName) root
+  (escapeIdent <| pkgName.toStringWithSep "-" false).toLower
+| .lib => libConfigFileContents (escapeName! pkgName) root
+| .exe => exeConfigFileContents (escapeName! pkgName) root
+| .math => mathConfigFileContents (escapeName! pkgName) root
 
 /-- Initialize a new Lake package in the given directory with the given name. -/
-def initPkg (dir : FilePath) (name : String) (tmp : InitTemplate) : LogIO PUnit := do
+def initPkg (dir : FilePath) (name : String) (tmp : InitTemplate) (env : Lake.Env) : LogIO PUnit := do
   let pkgName := stringToLegalOrSimpleName name
 
   -- determine the name to use for the root
@@ -150,7 +151,7 @@ def initPkg (dir : FilePath) (name : String) (tmp : InitTemplate) : LogIO PUnit 
     if tmp = .exe || rootExists then
       pure (root, rootFile, rootExists)
     else
-      let root := toUpperCamelCase (toUpperCamelCaseString name |>.toName)
+      let root := toUpperCamelCase pkgName
       let rootFile := Lean.modToFilePath dir root "lean"
       pure (root, rootFile, ← rootFile.pathExists)
 
@@ -159,28 +160,47 @@ def initPkg (dir : FilePath) (name : String) (tmp : InitTemplate) : LogIO PUnit 
   if (← configFile.pathExists) then
     error  "package already initialized"
   let rootNameStr := escapeName! root
-  let contents := tmp.configFileContents (escapeName! pkgName) rootNameStr
+  let contents := tmp.configFileContents pkgName rootNameStr
   IO.FS.writeFile configFile contents
 
   -- write example code if the files do not already exist
   if tmp = .exe then
     unless (← rootFile.pathExists) do
+      createParentDirs rootFile
       IO.FS.writeFile rootFile exeFileContents
   else
-    if !rootExists then
-      IO.FS.createDirAll rootFile.parent.get!
-      IO.FS.writeFile rootFile libFileContents
+    unless rootExists do
+      let libDir := rootFile.withExtension ""
+      let basicFile := libDir / "Basic.lean"
+      unless (← basicFile.pathExists) do
+        IO.FS.createDirAll libDir
+        IO.FS.writeFile basicFile basicFileContents
+      let rootContents := libRootFileContents root.toString rootNameStr
+      IO.FS.writeFile rootFile rootContents
     if tmp = .std then
       let mainFile := dir / mainFileName
       unless (← mainFile.pathExists) do
         IO.FS.writeFile mainFile <| mainFileContents rootNameStr
 
-  -- write Lean's toolchain to file (if it has one) for `elan`
-  if Lean.toolchain ≠ "" then
+  /-
+  Write the detected toolchain to file (if there is one) for `elan`.
+  See [lean4#2518][1] for details on the design considerations taken here.
+
+  [1]: https://github.com/leanprover/lean4/issues/2518
+  -/
+  let toolchainFile := dir / toolchainFileName
+  if env.toolchain.isEmpty then
+    -- Empty githash implies dev build
+    unless env.lean.githash.isEmpty do
+      unless (← toolchainFile.pathExists) do
+        logWarning <|
+          "could not create a `lean-toolchain` file for the new package; "  ++
+          "no known toolchain name for the current Elan/Lean/Lake"
+  else
     if tmp = .math then
-      download "lean-toolchain" mathToolchainUrl (dir / toolchainFileName)
+      download "lean-toolchain" mathToolchainUrl toolchainFile
     else
-      IO.FS.writeFile (dir / toolchainFileName) <| Lean.toolchain ++ "\n"
+      IO.FS.writeFile toolchainFile <| env.toolchain ++ "\n"
 
   -- update `.gitignore` with additional entries for Lake
   let h ← IO.FS.Handle.mk (dir / ".gitignore") IO.FS.Mode.append
@@ -196,10 +216,28 @@ def initPkg (dir : FilePath) (name : String) (tmp : InitTemplate) : LogIO PUnit 
     else
       logWarning "failed to initialize git repository"
 
-def init (pkgName : String) (tmp : InitTemplate) : LogIO PUnit :=
-  initPkg "." pkgName tmp
+def validatePkgName (pkgName : String) : LogIO PUnit := do
+  if pkgName.isEmpty || pkgName.all (· == '.') || pkgName.any (· ∈ ['/', '\\']) then
+    error "illegal package name"
+  if pkgName.toLower ∈ ["init", "lean", "lake", "main"] then
+    error "reserved package name"
 
-def new (pkgName : String) (tmp : InitTemplate) : LogIO PUnit := do
-  let dirName := pkgName.map fun chr => if chr == '.' then '-' else chr
-  IO.FS.createDir dirName
-  initPkg dirName pkgName tmp
+def init (pkgName : String) (tmp : InitTemplate) (env : Lake.Env) (cwd : FilePath := ".") : LogIO PUnit := do
+  let pkgName ← do
+    if pkgName == "." then
+      match (← IO.FS.realPath cwd).fileName with
+      | some dirName => pure dirName
+      | none => error "illegal package name"
+    else
+      pure pkgName
+  let pkgName := pkgName.trim
+  validatePkgName pkgName
+  IO.FS.createDirAll cwd
+  initPkg cwd pkgName tmp env
+
+def new (pkgName : String) (tmp : InitTemplate) (env : Lake.Env) (cwd : FilePath := ".") : LogIO PUnit := do
+  let pkgName := pkgName.trim
+  validatePkgName pkgName
+  let dirName := cwd / pkgName.map fun chr => if chr == '.' then '-' else chr
+  IO.FS.createDirAll dirName
+  initPkg dirName pkgName tmp env
