@@ -10,10 +10,10 @@ namespace Lake
 def env (cmd : String) (args : Array String := #[]) : LakeT IO UInt32 := do
   IO.Process.spawn {cmd, args, env := ← getAugmentedEnv} >>= (·.wait)
 
-def exe (name : Name) (args  : Array String := #[]) (oldMode := false) : LakeT LogIO UInt32 := do
+def exe (name : Name) (args  : Array String := #[]) (buildConfig : BuildConfig := {}) : LakeT LogIO UInt32 := do
   let ws ← getWorkspace
   if let some exe := ws.findLeanExe? name then
-    let exeFile ← ws.runBuild (exe.build >>= (·.await)) oldMode
+    let exeFile ← ws.runBuild (exe.build >>= (·.await)) buildConfig
     env exeFile.toString args
   else
     error s!"unknown executable `{name}`"
@@ -24,6 +24,5 @@ def uploadRelease (pkg : Package) (tag : String) : LogIO Unit := do
   if let some repo := pkg.releaseRepo? then
     args := args.append #["-R", repo]
   tar pkg.buildArchive pkg.buildDir pkg.buildArchiveFile
-    (excludePaths := #["*.tar.gz", "*.tar.gz.trace"])
   logInfo s!"Uploading {tag}/{pkg.buildArchive}"
   proc {cmd := "gh", args}

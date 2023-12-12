@@ -6,7 +6,7 @@ Authors: Mac Malone
 import Lake.Build.Index
 
 /-!
-Definitions to support `lake print-paths` builds.
+Definitions to support `lake setup-file` builds.
 -/
 
 open System
@@ -38,7 +38,7 @@ def recBuildImports (imports : Array Module)
       precompileImports := precompileImports.appendArray (← mod.transImports.fetch) |>.insert mod
     else
       precompileImports := precompileImports.appendArray (← mod.precompileImports.fetch)
-    modJobs := modJobs.push <| ← mod.leanBin.fetch
+    modJobs := modJobs.push <| ← mod.leanArts.fetch
   let pkgs := precompileImports.foldl (·.insert ·.pkg) OrdPackageSet.empty |>.toArray
   let externJobs ← pkgs.concatMapM (·.externLibs.mapM (·.dynlib.fetch))
   let precompileJobs ← precompileImports.toArray.mapM (·.dynlib.fetch)
@@ -46,7 +46,7 @@ def recBuildImports (imports : Array Module)
 
 /--
 Builds the workspace-local modules of list of imports.
-Used by `lake print-paths` to build modules for the Lean server.
+Used by `lake setup-file` to build modules for the Lean server.
 Returns the set of module dynlibs built (so they can be loaded by the server).
 
 Builds only module `.olean` and `.ilean` files if the package is configured

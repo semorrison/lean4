@@ -101,6 +101,17 @@ private def addDeclToUnfoldOrTheorem (thms : Meta.SimpTheorems) (id : Origin) (e
         return thms.addDeclToUnfoldCore declName
       else
         thms.addDeclToUnfold declName
+  else if e.isFVar then
+    let fvarId := e.fvarId!
+    let decl ← fvarId.getDecl
+    if (← isProp decl.type) then
+      thms.add id #[] e (post := post) (inv := inv)
+    else if !decl.isLet then
+      throwError "invalid argument, variable is not a proposition or let-declaration"
+    else if inv then
+      throwError "invalid '←' modifier, '{e}' is a let-declaration name to be unfolded"
+    else
+      return thms.addLetDeclToUnfold fvarId
   else
     thms.add id #[] e (post := post) (inv := inv)
 
@@ -138,7 +149,7 @@ def elabSimpArgs (stx : Syntax) (ctx : Simp.Context) (eraseLocal : Bool) (kind :
     /-
     syntax simpPre := "↓"
     syntax simpPost := "↑"
-    syntax simpLemma := (simpPre <|> simpPost)? term
+    syntax simpLemma := (simpPre <|> simpPost)? "← "? term
 
     syntax simpErase := "-" ident
     -/
@@ -237,6 +248,10 @@ def mkSimpContext (stx : Syntax) (eraseLocal : Bool) (kind := SimpKind.simp) (ig
   else
     let ctx := r.ctx
     let mut simpTheorems := ctx.simpTheorems
+    /-
+    When using `zeta := false`, we do not expand let-declarations when using `[*]`.
+    Users must explicitly include it in the list.
+    -/
     let hs ← getPropHyps
     for h in hs do
       unless simpTheorems.isErased (.fvar h) do
@@ -259,13 +274,16 @@ def traceSimpCall (stx : Syntax) (usedSimps : UsedSimps) : MetaM Unit := do
   let env ← getEnv
   for (thm, _) in usedSimps.toArray.qsort (·.2 < ·.2) do
     match thm with
-    | .decl declName => -- global definitions in the environment
-      if env.contains declName && !simpOnlyBuiltins.contains declName then
-        args := args.push (← `(Parser.Tactic.simpLemma| $(mkIdent (← unresolveNameGlobal declName)):ident))
+    | .decl declName inv => -- global definitions in the environment
+      if env.contains declName && (inv || !simpOnlyBuiltins.contains declName) then
+        args := args.push (if inv then
+          (← `(Parser.Tactic.simpLemma| ← $(mkIdent (← unresolveNameGlobal declName)):ident))
+        else
+          (← `(Parser.Tactic.simpLemma| $(mkIdent (← unresolveNameGlobal declName)):ident)))
     | .fvar fvarId => -- local hypotheses in the context
       if let some ldecl := lctx.find? fvarId then
         localsOrStar := localsOrStar.bind fun locals =>
-          if !ldecl.userName.isInaccessibleUserName &&
+          if !ldecl.userName.isInaccessibleUserName && !ldecl.userName.hasMacroScopes &&
               (lctx.findFromUserName? ldecl.userName).get!.fvarId == ldecl.fvarId then
             some (locals.push ldecl.userName)
           else
@@ -319,14 +337,14 @@ where
 /-
   "simp " (config)? (discharger)? ("only ")? ("[" simpLemma,* "]")? (location)?
 -/
-@[builtin_tactic Lean.Parser.Tactic.simp] def evalSimp : Tactic := fun stx => do
-  let { ctx, dischargeWrapper } ← withMainContext <| mkSimpContext stx (eraseLocal := false)
+@[builtin_tactic Lean.Parser.Tactic.simp] def evalSimp : Tactic := fun stx => withMainContext do
+  let { ctx, dischargeWrapper } ← mkSimpContext stx (eraseLocal := false)
   let usedSimps ← dischargeWrapper.with fun discharge? =>
     simpLocation ctx discharge? (expandOptLocation stx[5])
   if tactic.simp.trace.get (← getOptions) then
     traceSimpCall stx usedSimps
 
-@[builtin_tactic Lean.Parser.Tactic.simpAll] def evalSimpAll : Tactic := fun stx => do
+@[builtin_tactic Lean.Parser.Tactic.simpAll] def evalSimpAll : Tactic := fun stx => withMainContext do
   let { ctx, .. } ← mkSimpContext stx (eraseLocal := true) (kind := .simpAll) (ignoreStarArg := true)
   let (result?, usedSimps) ← simpAll (← getMainGoal) ctx
   match result? with
@@ -352,7 +370,7 @@ where
     | none => replaceMainGoal []
     | some mvarId => replaceMainGoal [mvarId]
     if tactic.simp.trace.get (← getOptions) then
-      traceSimpCall (← getRef) usedSimps
+      mvarId.withContext <| traceSimpCall (← getRef) usedSimps
 
 @[builtin_tactic Lean.Parser.Tactic.dsimp] def evalDSimp : Tactic := fun stx => do
   let { ctx, .. } ← withMainContext <| mkSimpContext stx (eraseLocal := false) (kind := .dsimp)

@@ -16,7 +16,7 @@ on:
 jobs:
   on-success:
     runs-on: ubuntu-latest
-    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    if: github.event.workflow_run.conclusion == 'success' && github.repository == 'leanprover/lean4'
     steps:
       - name: Retrieve information about the original workflow
         uses: potiuk/get-workflow-origin@v1_1 # https://github.com/marketplace/actions/get-workflow-origin
@@ -32,7 +32,9 @@ jobs:
           token: ${{ secrets.PR_RELEASES_TOKEN }}
           # Since `workflow_run` runs on master, we need to specify which commit to check out,
           # so that we tag the PR.
-          ref: ${{ steps.workflow-info.outputs.targetCommitSha }}
+          # It's important that we use `sourceHeadSha` here, not `targetCommitSha`
+          # as we *don't* want the synthetic merge with master.
+          ref: ${{ steps.workflow-info.outputs.sourceHeadSha }}
           # We need a full checkout, so that we can push the PR commits to the `lean4-pr-releases` repo.
           fetch-depth: 0
 
@@ -43,6 +45,8 @@ jobs:
         with:
           run_id: ${{ github.event.workflow_run.id }}
           path: artifacts
+          name: build-.*
+          name_is_regexp: true
       - name: Prepare release
         if: ${{ steps.workflow-info.outputs.pullRequestNumber != '' }}
         run: |
@@ -67,3 +71,155 @@ jobs:
         env:
           # The token used here must have `workflow` privileges.
           GITHUB_TOKEN: ${{ secrets.PR_RELEASES_TOKEN }}
+
+      - name: Add label
+        if: ${{ steps.workflow-info.outputs.pullRequestNumber != '' }}
+        uses: actions-ecosystem/action-add-labels@v1
+        with:
+          number: ${{ steps.workflow-info.outputs.pullRequestNumber }}
+          labels: toolchain-available
+
+      # Next, determine the most recent nightly release in this PR's history.
+      - name: Find most recent nightly
+        id: most-recent-nightly-tag
+        if: ${{ steps.workflow-info.outputs.pullRequestNumber != '' }}
+        run: |
+          echo "MOST_RECENT_NIGHTLY=$(script/most-recent-nightly-tag.sh)" >> $GITHUB_ENV
+
+      - name: 'Setup jq'
+        if: ${{ steps.workflow-info.outputs.pullRequestNumber != '' }}
+        uses: dcarbone/install-jq-action@v1.0.1
+
+      # Check that the most recently nightly coincides with 'git merge-base HEAD master'
+      - name: Check merge-base and nightly-testing-YYYY-MM-DD
+        if: ${{ steps.workflow-info.outputs.pullRequestNumber != '' }}
+        id: ready
+        run: |
+          echo "Most recent nightly: $MOST_RECENT_NIGHTLY"
+          NIGHTLY_SHA=$(git rev-parse nightly-$MOST_RECENT_NIGHTLY^{commit})
+          echo "SHA of most recent nightly: $NIGHTLY_SHA"
+          MERGE_BASE_SHA=$(git merge-base origin/master HEAD)
+          echo "SHA of merge-base: $MERGE_BASE_SHA"
+          if [ "$NIGHTLY_SHA" = "$MERGE_BASE_SHA" ]; then
+            echo "Most recent nightly tag agrees with the merge base."
+
+            REMOTE_BRANCHES=$(git ls-remote -h https://github.com/leanprover-community/mathlib4.git nightly-testing-$MOST_RECENT_NIGHTLY)
+
+            if [[ -n "$REMOTE_BRANCHES" ]]; then
+              echo "... and Mathlib has a 'nightly-testing-$MOST_RECENT_NIGHTLY' branch."
+              MESSAGE=""
+            else
+              echo "... but Mathlib does not yet have a 'nightly-testing-$MOST_RECENT_NIGHTLY' branch."
+              MESSAGE="- ❗ Mathlib CI can not be attempted yet, as the 'nightly-testing-$MOST_RECENT_NIGHTLY' branch does not exist there yet. We will retry when you push more commits. It may be necessary to rebase onto 'nightly' tomorrow."
+            fi
+
+          else
+            echo "The most recently nightly tag on this branch has SHA: $NIGHTLY_SHA"
+            echo "but 'git merge-base origin/master HEAD' reported: $MERGE_BASE_SHA"
+            git log -10
+
+            MESSAGE="- ❗ Mathlib CI will not be attempted unless you rebase your PR onto the 'nightly' branch."
+          fi
+
+          if [[ -n "$MESSAGE" ]]; then
+
+            echo "Checking existing messages"
+
+            # Use GitHub API to check if a comment already exists
+            existing_comment=$(curl -L -s -H "Authorization: token ${{ secrets.MATHLIB4_BOT }}" \
+                                    -H "Accept: application/vnd.github.v3+json" \
+                                    "https://api.github.com/repos/leanprover/lean4/issues/${{ steps.workflow-info.outputs.pullRequestNumber }}/comments" \
+                                    | jq '.[] | select(.body | startswith("- ❗ Mathlib") or startswith("- ✅ Mathlib") or startswith("- ❌ Mathlib") or startswith("- 💥 Mathlib") or startswith("- 🟡 Mathlib"))')
+            existing_comment_id=$(echo "$existing_comment" | jq -r .id)
+            existing_comment_body=$(echo "$existing_comment" | jq -r .body)
+
+            if [[ "$existing_comment_body" != *"$MESSAGE"* ]]; then
+              MESSAGE="$MESSAGE ($(date "+%Y-%m-%d %H:%M:%S"))"
+
+              echo "Posting message to the comments: $MESSAGE"
+
+              # Append new result to the existing comment or post a new comment
+              # It's essential we use the MATHLIB4_BOT token here, so that Mathlib CI can subsequently edit the comment.
+              if [ -z "$existing_comment_id" ]; then
+                # Post new comment with a bullet point
+                echo "Posting as new comment at leanprover/lean4/issues/${{ steps.workflow-info.outputs.pullRequestNumber }}/comments"
+                curl -L -s \
+                  -X POST \
+                  -H "Authorization: token ${{ secrets.MATHLIB4_BOT }}" \
+                  -H "Accept: application/vnd.github.v3+json" \
+                  -d "$(jq --null-input --arg val "$MESSAGE" '{"body": $val}')" \
+                  "https://api.github.com/repos/leanprover/lean4/issues/${{ steps.workflow-info.outputs.pullRequestNumber }}/comments"
+              else
+                # Append new result to the existing comment
+                echo "Appending to existing comment at leanprover/lean4/issues/${{ steps.workflow-info.outputs.pullRequestNumber }}/comments"
+                curl -L -s \
+                  -X PATCH \
+                  -H "Authorization: token ${{ secrets.MATHLIB4_BOT }}" \
+                  -H "Accept: application/vnd.github.v3+json" \
+                  -d "$(jq --null-input --arg existing "$existing_comment_body" --arg message "$MESSAGE" '{"body":($existing + "\n" + $message)}')" \
+                  "https://api.github.com/repos/leanprover/lean4/issues/comments/$existing_comment_id"
+              fi
+            else
+              echo "The message already exists in the comment body."
+            fi
+            echo "::set-output name=mathlib_ready::false"
+          else
+            echo "::set-output name=mathlib_ready::true"
+          fi
+
+      # We next automatically create a Mathlib branch using this toolchain.
+      # Mathlib CI will be responsible for reporting back success or failure
+      # to the PR comments asynchronously.
+      - name: Cleanup workspace
+        if: steps.workflow-info.outputs.pullRequestNumber != '' && steps.ready.outputs.mathlib_ready == 'true'
+        run: |
+          sudo rm -rf *
+
+      # Checkout the mathlib4 repository with all branches
+      - name: Checkout mathlib4 repository
+        if: steps.workflow-info.outputs.pullRequestNumber != '' && steps.ready.outputs.mathlib_ready == 'true'
+        uses: actions/checkout@v3
+        with:
+          repository: leanprover-community/mathlib4
+          token: ${{ secrets.MATHLIB4_BOT }}
+          ref: nightly-testing
+          fetch-depth: 0 # This ensures we check out all tags and branches.
+
+      - name: Check if branch exists
+        if: steps.workflow-info.outputs.pullRequestNumber != '' && steps.ready.outputs.mathlib_ready == 'true'
+        id: check_branch
+        run: |
+          git config user.name "leanprover-community-mathlib4-bot"
+          git config user.email "leanprover-community-mathlib4-bot@users.noreply.github.com"
+
+          if git branch -r | grep -q "nightly-testing-${MOST_RECENT_NIGHTLY}"; then
+            BASE=nightly-testing-${MOST_RECENT_NIGHTLY}
+          else
+            echo "This shouldn't be possible: couldn't find a 'nightly-testing-${MOST_RECENT_NIGHTLY}' branch at Mathlib. Falling back to 'nightly-testing'."
+            BASE=nightly-testing
+          fi
+
+          echo "Using base branch: $BASE"
+
+          git checkout $BASE
+
+          EXISTS=$(git ls-remote --heads origin lean-pr-testing-${{ steps.workflow-info.outputs.pullRequestNumber }} | wc -l)
+          echo "Branch exists: $EXISTS"
+          if [ "$EXISTS" = "0" ]; then
+            echo "Branch does not exist, creating it."
+            git checkout -b lean-pr-testing-${{ steps.workflow-info.outputs.pullRequestNumber }}
+            echo "leanprover/lean4-pr-releases:pr-release-${{ steps.workflow-info.outputs.pullRequestNumber }}" > lean-toolchain
+            git add lean-toolchain
+            git commit -m "Update lean-toolchain for testing https://github.com/leanprover/lean4/pull/${{ steps.workflow-info.outputs.pullRequestNumber }}"
+          else
+            echo "Branch already exists, pushing an empty commit."
+            git checkout lean-pr-testing-${{ steps.workflow-info.outputs.pullRequestNumber }}
+            # The Mathlib `nightly-testing` or `nightly-testing-YYYY-MM-DD` branch may have moved since this branch was created, so merge their changes.
+            git merge $BASE --strategy-option ours --no-commit --allow-unrelated-histories
+            git commit --allow-empty -m "Trigger CI for https://github.com/leanprover/lean4/pull/${{ steps.workflow-info.outputs.pullRequestNumber }}"
+          fi
+
+      - name: Push changes
+        if: steps.workflow-info.outputs.pullRequestNumber != '' && steps.ready.outputs.mathlib_ready == 'true'
+        run: |
+          git push origin lean-pr-testing-${{ steps.workflow-info.outputs.pullRequestNumber }}
