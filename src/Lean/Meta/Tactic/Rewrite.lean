@@ -14,6 +14,7 @@ namespace Lean.Meta
 structure RewriteResult where
   eNew     : Expr
   eqProof  : Expr
+  heq      : Expr -- the expression we rewrote by, with arguments filled in (perhaps still as metavariables)
   mvarIds  : List MVarId -- new goals
 
 /--
@@ -52,7 +53,7 @@ def _root_.Lean.MVarId.rewrite (mvarId : MVarId) (e : Expr) (heq : Expr)
           let otherMVarIds ← getMVarsNoDelayed eqPrf
           let otherMVarIds := otherMVarIds.filter (!newMVarIds.contains ·)
           let newMVarIds := newMVarIds ++ otherMVarIds
-          pure { eNew := eNew, eqProof := eqPrf, mvarIds := newMVarIds.toList }
+          pure { eNew := eNew, eqProof := eqPrf, heq := ← instantiateMVars heq, mvarIds := newMVarIds.toList }
         match symm with
         | false => cont heq heqType lhs rhs
         | true  => do
